@@ -1,0 +1,45 @@
+# maestro — dev toolchain + task runner (https://mise.jdx.dev)
+# Run `mise tasks` to list everything.
+
+[tools]
+go = "1.26"
+
+[env]
+MAESTRO_PORT = "8090"
+MAESTRO_KEY = "dev-key"
+
+[tasks.build]
+description = "Build all packages"
+run = "go build ./..."
+
+[tasks.test]
+description = "Run tests with the race detector"
+run = "go test -race ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
+[tasks.fmt]
+description = "Format the code (gofmt -w)"
+run = "gofmt -w ."
+
+[tasks.tidy]
+description = "Tidy go.mod / go.sum"
+run = "go mod tidy"
+
+[tasks.dev]
+description = "Run the maestro server on :$MAESTRO_PORT"
+run = 'go run ./cmd/maestro --listen ":$MAESTRO_PORT" --key "$MAESTRO_KEY"'
+
+[tasks.check]
+description = "Build, vet, and test"
+depends = ["build", "vet", "test"]
+
+[tasks."milestone:1"]
+description = "End-to-end demo: a real DBOS executor connects to maestro and registers"
+run = "./dev/milestone1_demo.sh"
+
+[tasks."milestone:2"]
+description = "End-to-end demo: browse a real executor's workflows/steps/queues + the HTML console"
+run = "./dev/milestone2_demo.sh"

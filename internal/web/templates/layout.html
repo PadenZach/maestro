@@ -1,0 +1,28 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · DBOS Console</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">DBOS</div>
+    <div class="topbar-conductor">
+      <span class="topbar-label">Conductor</span>
+      <span class="dot {{if gt .AppsAvailable 0}}dot-on{{end}}"></span>
+      <span class="topbar-avail">{{.AppsAvailable}} Available</span>
+    </div>
+  </header>
+
+  <nav class="breadcrumb">
+    {{range $i, $c := .Crumbs}}{{if $i}}<span class="sep">›</span>{{end}}{{if $c.Href}}<a href="{{$c.Href}}">{{$c.Label}}</a>{{else}}<span class="current">{{$c.Label}}</span>{{end}}{{end}}
+  </nav>
+
+  <main class="content">
+    {{template "content" .}}
+  </main>
+</body>
+</html>{{end}}

@@ -1,0 +1,37 @@
+{{define "workflow_rows"}}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Status</th>
+      <th>Workflow</th>
+      <th>Name</th>
+      <th>Queue</th>
+      <th>Created</th>
+      <th>Executor</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{if not .Workflows}}
+      <tr><td colspan="6" class="empty-row">No workflows match these filters.</td></tr>
+    {{end}}
+    {{range .Workflows}}
+    <tr class="row-link" onclick="window.location='/apps/{{$.App}}/workflows/{{.WorkflowUUID}}'">
+      <td><span class="badge {{statusClass (deref .Status)}}">{{derefOr .Status "—"}}</span></td>
+      <td class="mono"><a href="/apps/{{$.App}}/workflows/{{.WorkflowUUID}}">{{truncate 24 .WorkflowUUID}}</a></td>
+      <td>{{derefOr .WorkflowName "—"}}</td>
+      <td>{{derefOr .QueueName "—"}}</td>
+      <td class="mono subtle">{{derefOr .CreatedAt "—"}}</td>
+      <td class="mono subtle">{{truncate 12 (deref .ExecutorID)}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+
+<div class="pager">
+  <span class="subtle">{{.RangeLabel}}</span>
+  <span class="pager-btns">
+    {{if .PrevURL}}<button hx-get="{{.PrevURL}}" hx-target="#wf-rows">‹ Prev</button>{{else}}<button disabled>‹ Prev</button>{{end}}
+    {{if .NextURL}}<button hx-get="{{.NextURL}}" hx-target="#wf-rows">Next ›</button>{{else}}<button disabled>Next ›</button>{{end}}
+  </span>
+</div>
+{{end}}

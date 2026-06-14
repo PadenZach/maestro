@@ -1,0 +1,62 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="detail-head">
+  <div>
+    <h1 class="page-title">{{derefOr $d.Live.WF.WorkflowName $d.Live.WF.WorkflowUUID}}</h1>
+    <div class="detail-sub mono">{{$d.Live.WF.WorkflowUUID}}</div>
+    <div class="detail-sub subtle">{{derefOr $d.Live.WF.CreatedAt ""}}</div>
+  </div>
+</div>
+
+<div id="wf-live">
+  {{template "detail_live" $d.Live}}
+</div>
+
+<section class="panel">
+  <h2>Input / Output</h2>
+  <div class="blob-grid">
+    <div class="blob" hx-get="/apps/{{$d.Live.App}}/workflows/{{$d.Live.WF.WorkflowUUID}}/blob?kind=input"
+         hx-trigger="revealed" hx-swap="innerHTML">
+      <div class="blob-head">Input</div>
+      <div class="subtle">Loading…</div>
+    </div>
+    <div class="blob" hx-get="/apps/{{$d.Live.App}}/workflows/{{$d.Live.WF.WorkflowUUID}}/blob?kind=output"
+         hx-trigger="revealed" hx-swap="innerHTML">
+      <div class="blob-head">Output</div>
+      <div class="subtle">Loading…</div>
+    </div>
+  </div>
+</section>
+
+{{if $d.Events}}
+<section class="panel">
+  <h2>Events</h2>
+  <table class="data-table">
+    <thead><tr><th>Key</th><th>Value</th></tr></thead>
+    <tbody>{{range $d.Events}}<tr><td class="mono">{{.Key}}</td><td class="mono">{{truncate 200 .Value}}</td></tr>{{end}}</tbody>
+  </table>
+</section>
+{{end}}
+
+{{if $d.Notifications}}
+<section class="panel">
+  <h2>Notifications</h2>
+  <table class="data-table">
+    <thead><tr><th>Topic</th><th>Message</th><th>Consumed</th></tr></thead>
+    <tbody>{{range $d.Notifications}}<tr><td class="mono">{{derefOr .Topic "—"}}</td><td class="mono">{{truncate 160 .Message}}</td><td>{{if .Consumed}}yes{{else}}no{{end}}</td></tr>{{end}}</tbody>
+  </table>
+</section>
+{{end}}
+
+{{if $d.Streams}}
+<section class="panel">
+  <h2>Streams</h2>
+  {{range $d.Streams}}
+  <div class="stream">
+    <div class="blob-head mono">{{.Key}}</div>
+    <ul class="stream-values">{{range .Values}}<li class="mono">{{truncate 200 .}}</li>{{end}}</ul>
+  </div>
+  {{end}}
+</section>
+{{end}}
+{{end}}

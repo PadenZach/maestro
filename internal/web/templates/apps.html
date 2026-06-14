@@ -1,0 +1,38 @@
+{{define "content"}}
+{{$d := .Data}}
+<h1 class="page-title">Applications</h1>
+<p class="subtle">DBOS applications with at least one connected executor.</p>
+
+{{if not $d.Apps}}
+  <div class="empty">No applications connected. Start a DBOS executor pointed at this conductor.</div>
+{{else}}
+<div class="card-grid">
+  {{range $d.Apps}}
+  <a class="app-card" href="/apps/{{.Name}}/workflows">
+    <div class="app-card-head">
+      <span class="app-name">{{.Name}}</span>
+      <span class="badge {{if .Available}}ok{{else}}muted{{end}}">{{if .Available}}Available{{else}}Offline{{end}}</span>
+    </div>
+    <div class="app-card-meta">
+      <span>{{len .Executors}} executor{{if ne (len .Executors) 1}}s{{end}}</span>
+    </div>
+    {{if .Executors}}
+    <table class="mini-table">
+      <thead><tr><th>Executor</th><th>Version</th><th>Language</th><th>Host</th></tr></thead>
+      <tbody>
+        {{range .Executors}}
+        <tr>
+          <td class="mono">{{truncate 12 .ExecutorID}}</td>
+          <td class="mono">{{truncate 12 .Version}}</td>
+          <td>{{.Language}}</td>
+          <td>{{.Hostname}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </a>
+  {{end}}
+</div>
+{{end}}
+{{end}}

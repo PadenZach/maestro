@@ -1,0 +1,40 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1 class="page-title">{{$d.App}}</h1>
+  <span class="subtle">Queues</span>
+</div>
+
+{{if not $d.Queues}}
+  <div class="empty">No queues registered for this application.</div>
+{{else}}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Queue</th>
+      <th>Concurrency</th>
+      <th>Worker concurrency</th>
+      <th>Rate limit</th>
+      <th>Priority</th>
+      <th>Partitioned</th>
+      <th>Poll (s)</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range $d.Queues}}
+    <tr>
+      <td class="mono">{{.Name}}</td>
+      <td>{{if .Concurrency}}{{.Concurrency}}{{else}}∞{{end}}</td>
+      <td>{{if .WorkerConcurrency}}{{.WorkerConcurrency}}{{else}}∞{{end}}</td>
+      <td>{{if .RateLimitMax}}{{.RateLimitMax}}/{{.RateLimitPeriodSec}}s{{else}}—{{end}}</td>
+      <td>{{if .PriorityEnabled}}yes{{else}}no{{end}}</td>
+      <td>{{if .PartitionQueue}}yes{{else}}no{{end}}</td>
+      <td>{{.PollingIntervalSec}}</td>
+      <td><a class="link" href="/apps/{{$d.App}}/workflows?queue={{.Name}}">View queued ›</a></td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}

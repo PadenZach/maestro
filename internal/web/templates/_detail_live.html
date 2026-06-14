@@ -1,0 +1,25 @@
+{{define "detail_live"}}
+<div id="wf-live-inner"
+     {{if .IsRunning}}hx-get="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/live" hx-trigger="every 2s" hx-target="#wf-live" hx-swap="innerHTML"{{end}}>
+
+  <div class="status-row">
+    <span class="badge {{statusClass (deref .WF.Status)}}">{{derefOr .WF.Status "—"}}</span>
+    {{if .WF.QueueName}}<span class="tag">queue: {{deref .WF.QueueName}}</span>{{end}}
+    {{if .WF.ApplicationVersion}}<span class="tag">v: {{truncate 12 (deref .WF.ApplicationVersion)}}</span>{{end}}
+
+    <span class="actions">
+      <button class="btn"
+              hx-post="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/cancel"
+              hx-target="#wf-live" hx-swap="innerHTML"
+              hx-confirm="Cancel this workflow?">Cancel</button>
+      <button class="btn"
+              hx-post="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/resume"
+              hx-target="#wf-live" hx-swap="innerHTML">Resume</button>
+    </span>
+  </div>
+
+  {{if .Flash}}<div class="flash err">{{.Flash}}</div>{{end}}
+
+  {{template "timeline" .Timeline}}
+</div>
+{{end}}

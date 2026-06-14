@@ -1,0 +1,595 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+
+	"github.com/zpaden/maestro/internal/hub"
+	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/zpaden/maestro/internal/web"
+)
+
+// defaultPageSize bounds the workflow list; the list view never loads
+// input/output blobs (those lazy-load on the detail page).
+const defaultPageSize = 25
+
+// knownStatuses populates the workflow-list status filter (spec §6.6).
+var knownStatuses = []string{
+	"ENQUEUED", "PENDING", "SUCCESS", "ERROR",
+	"CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "DELAYED",
+}
+
+// --- view models (fields exported so html/template can read them) -----------
+
+type crumb struct{ Label, Href string }
+
+type page struct {
+	Title         string
+	AppsAvailable int
+	Crumbs        []crumb
+	Data          any
+}
+
+type appsData struct{ Apps []appSummary }
+
+type appSummary struct {
+	Name      string
+	Available bool
+	Executors []hub.ExecutorView
+}
+
+type filterState struct {
+	Status   string
+	Name     string
+	IDPrefix string
+	Queue    string
+}
+
+type workflowsData struct {
+	App      string
+	Statuses []string
+	Filter   filterState
+	Rows     workflowRows
+}
+
+type workflowRows struct {
+	App        string
+	Workflows  []protocol.WorkflowsOutput
+	RangeLabel string
+	PrevURL    string
+	NextURL    string
+}
+
+type detailData struct {
+	Live          detailLive
+	Events        []protocol.EventOutput
+	Notifications []protocol.NotificationOutput
+	Streams       []protocol.StreamEntryOutput
+}
+
+type detailLive struct {
+	App       string
+	WF        *protocol.WorkflowsOutput
+	Timeline  web.Timeline
+	IsRunning bool
+	Flash     string
+}
+
+type queuesData struct {
+	App    string
+	Queues []protocol.QueueOutput
+}
+
+type blobData struct{ Title, Content string }
+
+// --- dispatcher helper ------------------------------------------------------
+
+// responder is satisfied by every typed response via the embedded BaseResponse,
+// letting dispatch surface executor-side error_message uniformly.
+type responder interface{ Err() error }
+
+// dispatch sends req to a healthy executor of app, decodes the reply into out,
+// and returns any transport or executor-side error.
+func (s *Server) dispatch(ctx context.Context, app string, req protocol.Request, out responder) error {
+	raw, err := s.hub.Request(ctx, app, req)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return out.Err()
+}
+
+// appsAvailable counts distinct apps with at least one connected executor (the
+// "N Available" figure in the top bar).
+func (s *Server) appsAvailable() int {
+	seen := map[string]struct{}{}
+	for _, e := range s.hub.Executors() {
+		seen[e.App] = struct{}{}
+	}
+	return len(seen)
+}
+
+// renderErrorPage shows a full-page error (e.g. application unavailable).
+func (s *Server) renderErrorPage(w http.ResponseWriter, crumbs []crumb, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, hub.ErrAppUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	w.WriteHeader(status)
+	s.web.Page(w, "error", page{
+		Title:         "Error",
+		AppsAvailable: s.appsAvailable(),
+		Crumbs:        crumbs,
+		Data:          errorData{Message: err.Error()},
+	})
+}
+
+type errorData struct{ Message string }
+
+// partialError writes a small inline error fragment for HTMX swaps.
+func partialError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(err.Error()))
+}
+
+// --- HTML handlers ----------------------------------------------------------
+
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
+	byApp := map[string][]hub.ExecutorView{}
+	for _, e := range s.hub.Executors() {
+		byApp[e.App] = append(byApp[e.App], e)
+	}
+	names := make([]string, 0, len(byApp))
+	for name := range byApp {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	apps := make([]appSummary, 0, len(names))
+	for _, name := range names {
+		apps = append(apps, appSummary{Name: name, Available: true, Executors: byApp[name]})
+	}
+	s.web.Page(w, "apps", page{
+		Title:         "Applications",
+		AppsAvailable: len(names),
+		Crumbs:        []crumb{{Label: "Home"}},
+		Data:          appsData{Apps: apps},
+	})
+}
+
+func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	f := parseFilter(r)
+	rows, err := s.fetchRows(r.Context(), app, f, 0)
+	if err != nil {
+		s.renderErrorPage(w, workflowsCrumbs(app), err)
+		return
+	}
+	s.web.Page(w, "workflows", page{
+		Title:         app + " · Workflows",
+		AppsAvailable: s.appsAvailable(),
+		Crumbs:        workflowsCrumbs(app),
+		Data: workflowsData{
+			App:      app,
+			Statuses: knownStatuses,
+			Filter:   f,
+			Rows:     rows,
+		},
+	})
+}
+
+func (s *Server) handleWorkflowRows(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	f := parseFilter(r)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	rows, err := s.fetchRows(r.Context(), app, f, offset)
+	if err != nil {
+		partialError(w, err)
+		return
+	}
+	s.web.Partial(w, "workflow_rows", rows)
+}
+
+// fetchRows runs LIST_WORKFLOWS for the given filter/offset and builds the table
+// view model, requesting one extra row to detect a next page.
+func (s *Server) fetchRows(ctx context.Context, app string, f filterState, offset int) (workflowRows, error) {
+	limit := defaultPageSize
+	over := limit + 1
+	body := protocol.ListWorkflowsBody{
+		SortDesc: true,
+		Limit:    &over,
+		Offset:   &offset,
+	}
+	if f.Status != "" {
+		body.Status = []string{f.Status}
+	}
+	if f.Name != "" {
+		body.WorkflowName = []string{f.Name}
+	}
+	if f.IDPrefix != "" {
+		body.WorkflowIDPrefix = []string{f.IDPrefix}
+	}
+	if f.Queue != "" {
+		body.QueueName = []string{f.Queue}
+	}
+
+	var resp protocol.ListWorkflowsResponse
+	if err := s.dispatch(ctx, app, protocol.ListWorkflowsRequest(body), &resp); err != nil {
+		return workflowRows{}, err
+	}
+
+	wfs := resp.Output
+	hasNext := len(wfs) > limit
+	if hasNext {
+		wfs = wfs[:limit]
+	}
+	rows := workflowRows{App: app, Workflows: wfs}
+	if len(wfs) == 0 {
+		rows.RangeLabel = "No results"
+	} else {
+		rows.RangeLabel = fmt.Sprintf("%d–%d", offset+1, offset+len(wfs))
+	}
+	if offset > 0 {
+		prev := offset - limit
+		if prev < 0 {
+			prev = 0
+		}
+		rows.PrevURL = rowsURL(app, f, prev)
+	}
+	if hasNext {
+		rows.NextURL = rowsURL(app, f, offset+limit)
+	}
+	return rows, nil
+}
+
+func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+
+	live, err := s.buildDetailLive(r.Context(), app, id, "")
+	if err != nil {
+		s.renderErrorPage(w, detailCrumbs(app, id), err)
+		return
+	}
+
+	// Best-effort side panels; a failure here shouldn't blank the page.
+	var events protocol.GetWorkflowEventsResponse
+	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowEventsRequest(id), &events)
+	var notes protocol.GetWorkflowNotificationsResponse
+	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowNotificationsRequest(id), &notes)
+	var streams protocol.GetWorkflowStreamsResponse
+	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowStreamsRequest(id), &streams)
+
+	s.web.Page(w, "workflow_detail", page{
+		Title:         id + " · Workflow",
+		AppsAvailable: s.appsAvailable(),
+		Crumbs:        detailCrumbs(app, id),
+		Data: detailData{
+			Live:          live,
+			Events:        events.Events,
+			Notifications: notes.Notifications,
+			Streams:       streams.Streams,
+		},
+	})
+}
+
+func (s *Server) handleWorkflowLive(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	live, err := s.buildDetailLive(r.Context(), app, id, "")
+	if err != nil {
+		partialError(w, err)
+		return
+	}
+	s.web.Partial(w, "detail_live", live)
+}
+
+// buildDetailLive fetches the workflow header + steps and assembles the pollable
+// live region (status, actions, gantt timeline).
+func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (detailLive, error) {
+	var wfResp protocol.GetWorkflowResponse
+	if err := s.dispatch(ctx, app, protocol.GetWorkflowRequest(id, false, false), &wfResp); err != nil {
+		return detailLive{}, err
+	}
+	if wfResp.Output == nil {
+		return detailLive{}, fmt.Errorf("workflow %q not found", id)
+	}
+
+	var stepsResp protocol.ListStepsResponse
+	if err := s.dispatch(ctx, app, protocol.ListStepsRequest(id, false, nil, nil), &stepsResp); err != nil {
+		return detailLive{}, err
+	}
+
+	wf := wfResp.Output
+	return detailLive{
+		App:       app,
+		WF:        wf,
+		Timeline:  web.BuildTimeline(app, id, stepsResp.Output),
+		IsRunning: isRunning(wf.Status),
+		Flash:     flash,
+	}, nil
+}
+
+func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.ListStepsResponse
+	if err := s.dispatch(r.Context(), app, protocol.ListStepsRequest(id, false, nil, nil), &resp); err != nil {
+		partialError(w, err)
+		return
+	}
+	s.web.Partial(w, "timeline", web.BuildTimeline(app, id, resp.Output))
+}
+
+func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	kind := r.URL.Query().Get("kind")
+
+	loadInput := kind == "input"
+	loadOutput := kind == "output"
+	var resp protocol.GetWorkflowResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowRequest(id, loadInput, loadOutput), &resp); err != nil {
+		partialError(w, err)
+		return
+	}
+
+	data := blobData{Title: "Output"}
+	if loadInput {
+		data.Title = "Input"
+	}
+	if resp.Output != nil {
+		if loadInput {
+			data.Content = deref(resp.Output.Input)
+		} else {
+			data.Content = deref(resp.Output.Output)
+		}
+	}
+	s.web.Partial(w, "blob", data)
+}
+
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	s.manage(w, r, protocol.CancelRequest(r.PathValue("id"), false), "Cancel failed: ")
+}
+
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	s.manage(w, r, protocol.ResumeRequest(r.PathValue("id"), nil), "Resume failed: ")
+}
+
+// manage runs a mutating command then re-renders the live region, surfacing any
+// failure as an inline flash rather than tearing down the page (spec §3.4 P5).
+func (s *Server) manage(w http.ResponseWriter, r *http.Request, req protocol.Request, failPrefix string) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+
+	flash := ""
+	var resp protocol.SuccessResponse
+	if err := s.dispatch(r.Context(), app, req, &resp); err != nil {
+		flash = failPrefix + err.Error()
+	}
+	live, err := s.buildDetailLive(r.Context(), app, id, flash)
+	if err != nil {
+		partialError(w, err)
+		return
+	}
+	s.web.Partial(w, "detail_live", live)
+}
+
+func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	var resp protocol.ListQueuesResponse
+	if err := s.dispatch(r.Context(), app, protocol.ListQueuesRequest(), &resp); err != nil {
+		s.renderErrorPage(w, queuesCrumbs(app), err)
+		return
+	}
+	s.web.Page(w, "queues", page{
+		Title:         app + " · Queues",
+		AppsAvailable: s.appsAvailable(),
+		Crumbs:        queuesCrumbs(app),
+		Data:          queuesData{App: app, Queues: resp.Output},
+	})
+}
+
+// --- JSON handlers ----------------------------------------------------------
+
+func (s *Server) handleAPIApps(w http.ResponseWriter, r *http.Request) {
+	byApp := map[string]int{}
+	for _, e := range s.hub.Executors() {
+		byApp[e.App]++
+	}
+	type appJSON struct {
+		Name      string `json:"name"`
+		Executors int    `json:"executors"`
+	}
+	out := make([]appJSON, 0, len(byApp))
+	for name, n := range byApp {
+		out = append(out, appJSON{Name: name, Executors: n})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleAPIWorkflows(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	f := parseFilter(r)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	rows, err := s.fetchRows(r.Context(), app, f, offset)
+	if err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rows.Workflows)
+}
+
+func (s *Server) handleAPIWorkflow(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.GetWorkflowResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowRequest(id, true, true), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Output)
+}
+
+func (s *Server) handleAPISteps(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.ListStepsResponse
+	if err := s.dispatch(r.Context(), app, protocol.ListStepsRequest(id, true, nil, nil), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Output)
+}
+
+func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.GetWorkflowEventsResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowEventsRequest(id), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Events)
+}
+
+func (s *Server) handleAPINotifications(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.GetWorkflowNotificationsResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowNotificationsRequest(id), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Notifications)
+}
+
+func (s *Server) handleAPIStreams(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	id := r.PathValue("id")
+	var resp protocol.GetWorkflowStreamsResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowStreamsRequest(id), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Streams)
+}
+
+func (s *Server) handleAPIQueues(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	var resp protocol.ListQueuesResponse
+	if err := s.dispatch(r.Context(), app, protocol.ListQueuesRequest(), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Output)
+}
+
+func (s *Server) handleAPIQueue(w http.ResponseWriter, r *http.Request) {
+	app := r.PathValue("app")
+	name := r.PathValue("name")
+	var resp protocol.GetQueueResponse
+	if err := s.dispatch(r.Context(), app, protocol.GetQueueRequest(name), &resp); err != nil {
+		s.apiError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp.Output)
+}
+
+func (s *Server) apiError(w http.ResponseWriter, err error) {
+	status := http.StatusBadGateway
+	if errors.Is(err, hub.ErrAppUnavailable) {
+		status = http.StatusServiceUnavailable
+	}
+	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+// --- small helpers ----------------------------------------------------------
+
+func parseFilter(r *http.Request) filterState {
+	q := r.URL.Query()
+	return filterState{
+		Status:   q.Get("status"),
+		Name:     q.Get("name"),
+		IDPrefix: q.Get("id_prefix"),
+		Queue:    q.Get("queue"),
+	}
+}
+
+func rowsURL(app string, f filterState, offset int) string {
+	v := url.Values{}
+	if f.Status != "" {
+		v.Set("status", f.Status)
+	}
+	if f.Name != "" {
+		v.Set("name", f.Name)
+	}
+	if f.IDPrefix != "" {
+		v.Set("id_prefix", f.IDPrefix)
+	}
+	if f.Queue != "" {
+		v.Set("queue", f.Queue)
+	}
+	v.Set("offset", strconv.Itoa(offset))
+	return "/apps/" + url.PathEscape(app) + "/workflows/rows?" + v.Encode()
+}
+
+func isRunning(status *string) bool {
+	if status == nil {
+		return false
+	}
+	switch *status {
+	case "PENDING", "ENQUEUED", "DELAYED":
+		return true
+	}
+	return false
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func htmlEscape(s string) string {
+	r := make([]byte, 0, len(s))
+	for _, c := range []byte(s) {
+		switch c {
+		case '<':
+			r = append(r, "&lt;"...)
+		case '>':
+			r = append(r, "&gt;"...)
+		case '&':
+			r = append(r, "&amp;"...)
+		default:
+			r = append(r, c)
+		}
+	}
+	return string(r)
+}
+
+func workflowsCrumbs(app string) []crumb {
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: "/apps/" + app + "/workflows"}, {Label: "Workflows"}}
+}
+
+func detailCrumbs(app, id string) []crumb {
+	return []crumb{
+		{Label: "Home", Href: "/"},
+		{Label: app, Href: "/apps/" + app + "/workflows"},
+		{Label: "Workflows", Href: "/apps/" + app + "/workflows"},
+		{Label: id},
+	}
+}
+
+func queuesCrumbs(app string) []crumb {
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: "/apps/" + app + "/workflows"}, {Label: "Queues"}}
+}

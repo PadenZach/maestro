@@ -1,0 +1,26 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1 class="page-title">{{$d.App}}</h1>
+  <span class="subtle">Workflows</span>
+</div>
+
+<div class="filter-bar">
+  <form hx-get="/apps/{{$d.App}}/workflows/rows"
+        hx-target="#wf-rows"
+        hx-trigger="change, search, keyup delay:350ms"
+        hx-indicator="#wf-loading">
+    <select name="status">
+      <option value="">All statuses</option>
+      {{range $d.Statuses}}<option value="{{.}}" {{if eq . $d.Filter.Status}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <input type="text" name="name" value="{{$d.Filter.Name}}" placeholder="Workflow name">
+    <input type="search" name="id_prefix" value="{{$d.Filter.IDPrefix}}" placeholder="Search by workflow ID prefix">
+    <span id="wf-loading" class="htmx-indicator">…</span>
+  </form>
+</div>
+
+<div id="wf-rows">
+  {{template "workflow_rows" $d.Rows}}
+</div>
+{{end}}
