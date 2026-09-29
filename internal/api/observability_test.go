@@ -18,6 +18,16 @@ func staticList(wfs ...protocol.WorkflowsOutput) respondFn {
 	}
 }
 
+func TestFakeUnknownCommandReportsExecutorError(t *testing.T) {
+	ts, h := newTestServer(t)
+	dialFake(t, ts, "myapp", "testkey", "exec-1", nil)
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	code, body := getBody(t, ts.URL+"/api/myapp/workflows/wf/events")
+	if code != 502 || !strings.Contains(body, "Unknown message type") {
+		t.Fatalf("unknown fake command masked: %d %s", code, body)
+	}
+}
+
 func TestListWorkflows_JSONAndHTML(t *testing.T) {
 	ts, h := newTestServer(t)
 	wf := sampleWorkflow("id_e1002bf4-01d9", "SUCCESS")

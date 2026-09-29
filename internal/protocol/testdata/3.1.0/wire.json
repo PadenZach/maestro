@@ -1,0 +1,372 @@
+{
+  "requests": {
+    "executor_info": {
+      "type": "executor_info",
+      "request_id": "req-sanitized"
+    },
+    "list_workflows": {
+      "type": "list_workflows",
+      "request_id": "req-sanitized",
+      "body": {
+        "sort_desc": false,
+        "load_input": false,
+        "load_output": false,
+        "queues_only": false
+      }
+    },
+    "list_queued_workflows": {
+      "type": "list_queued_workflows",
+      "request_id": "req-sanitized",
+      "body": {
+        "sort_desc": false,
+        "load_input": false,
+        "load_output": false
+      }
+    },
+    "get_workflow": {
+      "type": "get_workflow",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "load_input": false,
+      "load_output": true
+    },
+    "list_steps": {
+      "type": "list_steps",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "load_output": true
+    },
+    "get_workflow_events": {
+      "type": "get_workflow_events",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized"
+    },
+    "get_workflow_notifications": {
+      "type": "get_workflow_notifications",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized"
+    },
+    "get_workflow_streams": {
+      "type": "get_workflow_streams",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized"
+    },
+    "list_queues": {
+      "type": "list_queues",
+      "request_id": "req-sanitized"
+    },
+    "get_queue": {
+      "type": "get_queue",
+      "request_id": "req-sanitized",
+      "name": "demo-queue"
+    },
+    "cancel": {
+      "type": "cancel",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "cancel_children": false
+    },
+    "resume": {
+      "type": "resume",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized"
+    },
+    "list_workflows_filtered": {
+      "type": "list_workflows",
+      "request_id": "req-sanitized",
+      "body": {
+        "sort_desc": true,
+        "load_input": true,
+        "load_output": false,
+        "queues_only": false,
+        "status": [
+          "SUCCESS"
+        ],
+        "workflow_name": [
+          "demo"
+        ],
+        "workflow_id_prefix": [
+          "wf-"
+        ],
+        "offset": 2,
+        "limit": 5,
+        "was_forked_from": false
+      }
+    },
+    "list_steps_paged": {
+      "type": "list_steps",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "load_output": false,
+      "limit": 5,
+      "offset": 2
+    },
+    "resume_queued": {
+      "type": "resume",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "queue_name": "demo-queue"
+    }
+  },
+  "responses": {
+    "executor_info": {
+      "type": "executor_info",
+      "request_id": "req-sanitized",
+      "executor_id": "exec-sanitized",
+      "application_version": "app-v1",
+      "hostname": null,
+      "language": "python",
+      "dbos_version": "3.1.0",
+      "executor_metadata": {
+        "role": "fixture"
+      },
+      "error_message": null
+    },
+    "list_workflows": {
+      "type": "list_workflows",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "WorkflowUUID": "wf-sanitized",
+          "Status": "SUCCESS",
+          "WorkflowName": "demo",
+          "WorkflowClassName": null,
+          "WorkflowConfigName": null,
+          "AuthenticatedUser": null,
+          "AssumedRole": null,
+          "AuthenticatedRoles": null,
+          "Input": "[\"opaque\\ninput\"]",
+          "Output": "{\"opaque\":true}",
+          "Error": null,
+          "CreatedAt": "123",
+          "UpdatedAt": null,
+          "QueueName": "demo-queue",
+          "ApplicationVersion": null,
+          "ExecutorID": null,
+          "WorkflowTimeoutMS": null,
+          "WorkflowDeadlineEpochMS": null,
+          "DeduplicationID": null,
+          "Priority": null,
+          "QueuePartitionKey": null,
+          "ForkedFrom": null,
+          "WasForkedFrom": false,
+          "ParentWorkflowID": null,
+          "DequeuedAt": null,
+          "DelayUntilEpochMS": null,
+          "CompletedAt": null,
+          "Attributes": null,
+          "ScheduleName": null,
+          "ApplicationName": null
+        }
+      ],
+      "error_message": null
+    },
+    "list_queued_workflows": {
+      "type": "list_queued_workflows",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "WorkflowUUID": "wf-sanitized",
+          "Status": "SUCCESS",
+          "WorkflowName": "demo",
+          "WorkflowClassName": null,
+          "WorkflowConfigName": null,
+          "AuthenticatedUser": null,
+          "AssumedRole": null,
+          "AuthenticatedRoles": null,
+          "Input": "[\"opaque\\ninput\"]",
+          "Output": "{\"opaque\":true}",
+          "Error": null,
+          "CreatedAt": "123",
+          "UpdatedAt": null,
+          "QueueName": "demo-queue",
+          "ApplicationVersion": null,
+          "ExecutorID": null,
+          "WorkflowTimeoutMS": null,
+          "WorkflowDeadlineEpochMS": null,
+          "DeduplicationID": null,
+          "Priority": null,
+          "QueuePartitionKey": null,
+          "ForkedFrom": null,
+          "WasForkedFrom": false,
+          "ParentWorkflowID": null,
+          "DequeuedAt": null,
+          "DelayUntilEpochMS": null,
+          "CompletedAt": null,
+          "Attributes": null,
+          "ScheduleName": null,
+          "ApplicationName": null
+        }
+      ],
+      "error_message": null
+    },
+    "get_workflow": {
+      "type": "get_workflow",
+      "request_id": "req-sanitized",
+      "output": {
+        "WorkflowUUID": "wf-sanitized",
+        "Status": "SUCCESS",
+        "WorkflowName": "demo",
+        "WorkflowClassName": null,
+        "WorkflowConfigName": null,
+        "AuthenticatedUser": null,
+        "AssumedRole": null,
+        "AuthenticatedRoles": null,
+        "Input": "[\"opaque\\ninput\"]",
+        "Output": "{\"opaque\":true}",
+        "Error": null,
+        "CreatedAt": "123",
+        "UpdatedAt": null,
+        "QueueName": "demo-queue",
+        "ApplicationVersion": null,
+        "ExecutorID": null,
+        "WorkflowTimeoutMS": null,
+        "WorkflowDeadlineEpochMS": null,
+        "DeduplicationID": null,
+        "Priority": null,
+        "QueuePartitionKey": null,
+        "ForkedFrom": null,
+        "WasForkedFrom": false,
+        "ParentWorkflowID": null,
+        "DequeuedAt": null,
+        "DelayUntilEpochMS": null,
+        "CompletedAt": null,
+        "Attributes": null,
+        "ScheduleName": null,
+        "ApplicationName": null
+      },
+      "error_message": null
+    },
+    "get_workflow_missing": {
+      "type": "get_workflow",
+      "request_id": "req-sanitized",
+      "output": null,
+      "error_message": null
+    },
+    "list_steps": {
+      "type": "list_steps",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "function_id": 1,
+          "function_name": "demo_step",
+          "output": "[\"opaque-step\"]",
+          "error": null,
+          "child_workflow_id": null,
+          "started_at_epoch_ms": "123",
+          "completed_at_epoch_ms": "124"
+        }
+      ],
+      "error_message": null
+    },
+    "list_steps_null": {
+      "type": "list_steps",
+      "request_id": "req-sanitized",
+      "output": null,
+      "error_message": null
+    },
+    "get_workflow_events": {
+      "type": "get_workflow_events",
+      "request_id": "req-sanitized",
+      "events": [
+        {
+          "key": "safe",
+          "value": "{\"opaque\":1}"
+        }
+      ],
+      "error_message": null
+    },
+    "get_workflow_notifications": {
+      "type": "get_workflow_notifications",
+      "request_id": "req-sanitized",
+      "notifications": [
+        {
+          "topic": null,
+          "message": "[\"opaque\"]",
+          "created_at_epoch_ms": 123,
+          "consumed": false
+        }
+      ],
+      "error_message": null
+    },
+    "get_workflow_streams": {
+      "type": "get_workflow_streams",
+      "request_id": "req-sanitized",
+      "streams": [
+        {
+          "key": "safe",
+          "values": [
+            "\"opaque\""
+          ]
+        }
+      ],
+      "error_message": null
+    },
+    "list_queues": {
+      "type": "list_queues",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "name": "demo-queue",
+          "concurrency": null,
+          "worker_concurrency": null,
+          "rate_limit_max": null,
+          "rate_limit_period_sec": null,
+          "priority_enabled": true,
+          "partition_queue": false,
+          "polling_interval_sec": 0.5,
+          "application_name": null,
+          "partition_concurrency": null,
+          "partition_worker_concurrency": null,
+          "partition_rate_limit_max": null,
+          "partition_rate_limit_period_sec": null
+        }
+      ],
+      "error_message": null
+    },
+    "get_queue": {
+      "type": "get_queue",
+      "request_id": "req-sanitized",
+      "output": {
+        "name": "demo-queue",
+        "concurrency": null,
+        "worker_concurrency": null,
+        "rate_limit_max": null,
+        "rate_limit_period_sec": null,
+        "priority_enabled": true,
+        "partition_queue": false,
+        "polling_interval_sec": 0.5,
+        "application_name": null,
+        "partition_concurrency": null,
+        "partition_worker_concurrency": null,
+        "partition_rate_limit_max": null,
+        "partition_rate_limit_period_sec": null
+      },
+      "error_message": null
+    },
+    "get_queue_missing": {
+      "type": "get_queue",
+      "request_id": "req-sanitized",
+      "output": null,
+      "error_message": null
+    },
+    "cancel": {
+      "type": "cancel",
+      "request_id": "req-sanitized",
+      "success": true,
+      "error_message": null
+    },
+    "resume": {
+      "type": "resume",
+      "request_id": "req-sanitized",
+      "success": true,
+      "error_message": null
+    },
+    "cancel_failed": {
+      "type": "cancel",
+      "request_id": "req-sanitized",
+      "success": false,
+      "error_message": "sanitized failure"
+    }
+  }
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -110,6 +111,32 @@ func TestMultipleExecutorsSameApp(t *testing.T) {
 		answerExecutorInfo(t, ctx, c, id, "v1")
 	}
 	waitFor(t, func() bool { return len(h.Executors()) == 2 })
+}
+
+func TestExecutorOriginPolicy(t *testing.T) {
+	ts, h := newTestServer(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	url := wsURL(ts, "/websocket/app/testkey")
+	// SDK processes do not set Origin; browser requests from foreign sites do.
+	c, _, err := websocket.Dial(ctx, url, nil)
+	if err != nil {
+		t.Fatalf("absent Origin rejected: %v", err)
+	}
+	answerExecutorInfo(t, ctx, c, "originless", "v1")
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	_ = c.CloseNow()
+	headers := http.Header{"Origin": []string{"https://foreign.example"}}
+	foreign, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: headers})
+	if foreign != nil {
+		_ = foreign.CloseNow()
+	}
+	if err == nil {
+		t.Fatal("foreign Origin accepted")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("foreign Origin status: %v, %v", resp, err)
+	}
 }
 
 func TestBadKeyRejected(t *testing.T) {

@@ -1,7 +1,5 @@
-// Package config holds the conductor server configuration. In M1 this is
-// intentionally tiny: a listen address and a single static "conductor key"
-// used to authenticate executor WebSocket connections. M2 replaces the static
-// key with a Postgres-backed app/key registry.
+// Package config holds the conductor server configuration. The single static
+// key authenticates executor WebSocket connections, not HTTP requests.
 package config
 
 import (
@@ -17,7 +15,7 @@ type Config struct {
 	// port the DBOS docs use for self-hosted Conductor.
 	ListenAddr string
 	// ConductorKey is the single accepted API key for executor connections in
-	// M1. Executors connect to /websocket/{app_name}/{conductor_key}; we accept
+	// this development server. Executors connect to /websocket/{app_name}/{conductor_key}; we accept
 	// the upgrade only when {conductor_key} matches this value.
 	ConductorKey string
 	// RequestTimeout bounds a single server→executor round-trip issued by the
@@ -25,6 +23,8 @@ type Config struct {
 	// answer within this window the dispatcher gives up on that socket (and may
 	// retry another executor of the same app).
 	RequestTimeout time.Duration
+	// LocalHTTPV2 exposes only a read-only, unauthenticated loopback test adapter.
+	LocalHTTPV2 bool
 }
 
 // Load resolves configuration from environment variables, then lets command
@@ -38,6 +38,7 @@ func Load() Config {
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
 	flag.StringVar(&cfg.ConductorKey, "key", cfg.ConductorKey, "accepted conductor API key (dev/static)")
 	flag.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
+	flag.BoolVar(&cfg.LocalHTTPV2, "local-http-v2", false, "enable read-only local-org HTTP v2 adapter (loopback listener only)")
 	flag.Parse()
 	return cfg
 }

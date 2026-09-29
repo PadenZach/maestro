@@ -1,5 +1,5 @@
 // Package api serves conductor's HTTP surface: the executor WebSocket endpoint,
-// a health check, the JSON API, and (M2) the embedded DBOS Console — HTMX pages
+// a health check, the JSON API, and the embedded DBOS Console — HTMX pages
 // for browsing workflows, steps, queues, and for basic management.
 package api
 
@@ -38,7 +38,7 @@ func New(cfg config.Config, h *hub.Hub, log *slog.Logger) *Server {
 func (s *Server) Handler() http.Handler { return s.mux }
 
 func (s *Server) routes() {
-	// Transport + health (M1).
+	// Transport and health.
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /websocket/{app_name}/{conductor_key}", s.handleWS)
 
@@ -56,6 +56,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /apps/{app}/workflows/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /apps/{app}/workflows/{id}/resume", s.handleResume)
 	s.mux.HandleFunc("GET /apps/{app}/queues", s.handleQueues)
+
+	// The official HTTP subset is an explicit loopback-only test adapter.
+	if s.cfg.LocalHTTPV2 {
+		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/search", s.localV2Search)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}", s.localV2Get)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/steps", s.localV2Steps)
+	}
 
 	// JSON API (mirror of the reads, for tests/SDKs).
 	s.mux.HandleFunc("GET /api/executors", s.handleExecutors)

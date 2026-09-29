@@ -1,12 +1,14 @@
 // Command maestro is the Go port of the DBOS Conductor control plane.
-// M1: a WebSocket hub that DBOS executors connect to, completing the
-// EXECUTOR_INFO handshake and appearing under GET /api/executors.
+// Its WebSocket hub completes the EXECUTOR_INFO handshake with DBOS executors
+// and lists connected executors under GET /api/executors.
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +20,45 @@ import (
 	"github.com/zpaden/maestro/internal/hub"
 )
 
+func serve(ctx context.Context, listener net.Listener, server *http.Server, h *hub.Hub) error {
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case serveErr = <-served:
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// Shutdown closes the HTTP listener but waits for active HTTP handlers.
+	// Tear down upgraded sockets concurrently so handlers blocked on executor
+	// RPCs can finish before the shared shutdown deadline expires.
+	httpDone := make(chan error, 1)
+	go func() { httpDone <- server.Shutdown(shutdownCtx) }()
+	hubErr := h.Shutdown(shutdownCtx)
+	httpErr := <-httpDone
+	if serveErr == nil {
+		serveErr = <-served
+	}
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
+	}
+	return errors.Join(serveErr, httpErr, hubErr)
+}
+
+// validateLocalHTTPV2 checks the bound socket rather than trusting a hostname
+// that might resolve to a different address at listen time.
+func validateLocalHTTPV2(enabled bool, addr net.Addr) error {
+	if !enabled {
+		return nil
+	}
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok || tcp.IP == nil || !tcp.IP.IsLoopback() {
+		return fmt.Errorf("--local-http-v2 requires an actual loopback TCP listener")
+	}
+	return nil
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -27,27 +68,21 @@ func main() {
 	h := hub.New(log, cfg.RequestTimeout)
 	srv := api.New(cfg, h, log)
 
-	httpServer := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: srv.Handler(),
+	listener, err := net.Listen("tcp", cfg.ListenAddr)
+	if err != nil {
+		log.Error("http listen failed", "err", err)
+		os.Exit(1)
 	}
-
-	go func() {
-		log.Info("maestro listening", "addr", cfg.ListenAddr)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("http server failed", "err", err)
-			os.Exit(1)
-		}
-	}()
-
+	if err := validateLocalHTTPV2(cfg.LocalHTTPV2, listener.Addr()); err != nil {
+		_ = listener.Close()
+		log.Error("unsafe local adapter listener", "err", err)
+		os.Exit(1)
+	}
+	log.Info("maestro listening", "addr", listener.Addr().String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	<-ctx.Done()
-
-	log.Info("shutting down")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Error("graceful shutdown failed", "err", err)
+	if err := serve(ctx, listener, &http.Server{Handler: srv.Handler()}, h); err != nil {
+		log.Error("server shutdown failed", "err", err)
+		os.Exit(1)
 	}
 }

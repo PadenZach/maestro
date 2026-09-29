@@ -1,13 +1,13 @@
 package protocol
 
-// Typed builders for the M2 server→executor requests. Each returns the open
+// Typed builders for server→executor requests. Each returns the open
 // Request map (codec.go) with "type" set and the message's fields filled in; the
 // connection layer adds "request_id" at send time. Building the body as a map
 // and omitting unset filters keeps the wire frame minimal — the Python client's
 // from_json allowlist ignores absent optional fields.
 
-// ListWorkflowsBody carries the LIST_WORKFLOWS filters (protocol.py:ListWorkflowsBody,
-// spec §6.3). All fields are optional; only the non-nil ones are sent. Slice
+// ListWorkflowsBody carries the LIST_WORKFLOWS filters (protocol.py:ListWorkflowsBody).
+// All fields are optional; only the non-nil ones are sent. Slice
 // filters (name/status/version/...) accept one or many values on the wire.
 type ListWorkflowsBody struct {
 	WorkflowUUIDs     []string
@@ -34,6 +34,9 @@ type ListWorkflowsBody struct {
 	QueuesOnly        bool
 	WasForkedFrom     *bool
 	HasParent         *bool
+	Attributes        map[string]any `json:"attributes"`
+	ScheduleName      []string       `json:"schedule_name"`
+	ApplicationName   []string       `json:"application_name"`
 }
 
 // toMap renders the body to its wire form, omitting empty/unset filters.
@@ -72,6 +75,11 @@ func (b ListWorkflowsBody) toMap() map[string]any {
 	putStrs("queue_name", b.QueueName)
 	putStrs("workflow_id_prefix", b.WorkflowIDPrefix)
 	putStrs("executor_id", b.ExecutorID)
+	if b.Attributes != nil {
+		m["attributes"] = b.Attributes
+	}
+	putStrs("schedule_name", b.ScheduleName)
+	putStrs("application_name", b.ApplicationName)
 	if b.Limit != nil {
 		m["limit"] = *b.Limit
 	}
@@ -149,9 +157,18 @@ func GetWorkflowStreamsRequest(workflowID string) Request {
 	return r
 }
 
-// ListQueuesRequest builds a LIST_QUEUES frame (no fields beyond the envelope).
-func ListQueuesRequest() Request {
-	return NewRequest(MsgListQueues)
+// ListQueuesBody optionally filters queues by application on reviewed SDKs.
+type ListQueuesBody struct {
+	ApplicationName []string `json:"application_name"`
+}
+
+// ListQueuesRequest retains the legacy no-body form when called without a filter.
+func ListQueuesRequest(body ...ListQueuesBody) Request {
+	r := NewRequest(MsgListQueues)
+	if len(body) > 0 && len(body[0].ApplicationName) > 0 {
+		r["body"] = map[string]any{"application_name": body[0].ApplicationName}
+	}
+	return r
 }
 
 // GetQueueRequest builds a GET_QUEUE frame.

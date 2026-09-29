@@ -1,5 +1,5 @@
 """
-Dev harness for Milestone 2: a DBOS application with a multi-step workflow and a
+Observability demo harness: a DBOS application with a multi-step workflow and a
 queue, so the maestro console has something interesting to render (a gantt step
 timeline, queued workflows, etc.).
 

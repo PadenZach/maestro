@@ -7,9 +7,8 @@
 // the request_id and carrying an optional error_message. Every inbound frame
 // on a connection is therefore a response to a request we sent.
 //
-// M1 only needs the EXECUTOR_INFO handshake, but all MessageType values are
-// defined now (the string values are wire-significant) so M2 can add typed
-// request/response structs without touching this enum.
+// MessageType values include commands not yet handled by this server. The string
+// values are wire-significant; presence here does not imply command support.
 package protocol
 
 import "errors"
@@ -26,6 +25,7 @@ const (
 	MsgListQueuedWorkflows         MessageType = "list_queued_workflows"
 	MsgResume                      MessageType = "resume"
 	MsgRestart                     MessageType = "restart"
+	MsgRewindWorkflow              MessageType = "rewind_workflow"
 	MsgGetWorkflow                 MessageType = "get_workflow"
 	MsgExistPendingWorkflows       MessageType = "exist_pending_workflows"
 	MsgListSteps                   MessageType = "list_steps"
@@ -63,7 +63,7 @@ type BaseMessage struct {
 
 // BaseResponse is the minimal response shape: envelope plus an optional error.
 // Mutating commands extend this with a "success" bool; read commands extend it
-// with their output payload. (Those structs arrive in M2.)
+// with their output payload.
 type BaseResponse struct {
 	Type         MessageType `json:"type"`
 	RequestID    string      `json:"request_id"`
@@ -72,7 +72,7 @@ type BaseResponse struct {
 
 // Err converts a non-empty error_message into a Go error. Embedded in every
 // typed response so the dispatcher can surface executor-side failures uniformly
-// (spec §3.4 P5: a failing command returns a structured error, not a teardown).
+// without tearing down the connection.
 func (b BaseResponse) Err() error {
 	if b.ErrorMessage != nil && *b.ErrorMessage != "" {
 		return errors.New(*b.ErrorMessage)

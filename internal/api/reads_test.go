@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -27,22 +28,32 @@ type respondFn func(req map[string]any) map[string]any
 
 func dialFake(t *testing.T, ts *httptest.Server, app, key, execID string, handlers map[protocol.MessageType]respondFn) *fakeExec {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
 	c, _, err := websocket.Dial(ctx, wsURL(ts, "/websocket/"+app+"/"+key), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	answerExecutorInfo(t, ctx, c, execID, "v1")
 	fe := &fakeExec{c: c, captured: map[string]map[string]any{}}
-	go fe.loop(handlers)
-	t.Cleanup(func() { _ = c.Close(websocket.StatusNormalClosure, "") })
+	done := make(chan struct{})
+	go func() { defer close(done); fe.loop(handlers) }()
+	t.Cleanup(func() {
+		_ = c.CloseNow()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Error("fake executor did not stop")
+		}
+	})
 	return fe
 }
 
 func (fe *fakeExec) loop(handlers map[protocol.MessageType]respondFn) {
-	ctx := context.Background()
 	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		_, data, err := fe.c.Read(ctx)
+		cancel()
 		if err != nil {
 			return
 		}
@@ -59,7 +70,7 @@ func (fe *fakeExec) loop(handlers map[protocol.MessageType]respondFn) {
 		if h := handlers[protocol.MessageType(typ)]; h != nil {
 			resp = h(req)
 		} else {
-			resp = map[string]any{} // empty (nil payload) response
+			resp = map[string]any{"error_message": "Unknown message type"}
 		}
 		if resp == nil { // handler asked us to disconnect
 			_ = fe.c.Close(websocket.StatusNormalClosure, "")
@@ -68,7 +79,10 @@ func (fe *fakeExec) loop(handlers map[protocol.MessageType]respondFn) {
 		resp["type"] = typ
 		resp["request_id"] = reqID
 		out, _ := json.Marshal(resp)
-		if err := fe.c.Write(ctx, websocket.MessageText, out); err != nil {
+		writeCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		err = fe.c.Write(writeCtx, websocket.MessageText, out)
+		stop()
+		if err != nil {
 			return
 		}
 	}
@@ -94,7 +108,7 @@ func strp(s string) *string { return &s }
 
 func getBody(t *testing.T, url string) (int, string) {
 	t.Helper()
-	resp, err := http.Get(url)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(url)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
@@ -105,7 +119,7 @@ func getBody(t *testing.T, url string) (int, string) {
 
 func postBody(t *testing.T, url string) (int, string) {
 	t.Helper()
-	resp, err := http.Post(url, "application/x-www-form-urlencoded", nil)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Post(url, "application/x-www-form-urlencoded", nil)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)
 	}

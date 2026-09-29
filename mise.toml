@@ -13,33 +13,56 @@ description = "Build all packages"
 run = "go build ./..."
 
 [tasks.test]
-description = "Run tests with the race detector"
-run = "go test -race ./..."
+description = "Run uncached tests with the race detector"
+run = "go test -race -count=1 ./..."
 
 [tasks.vet]
 description = "Run go vet"
 run = "go vet ./..."
 
 [tasks.fmt]
-description = "Format the code (gofmt -w)"
-run = "gofmt -w ."
+description = "Format maestro Go source (exclude optional reference checkouts)"
+run = "gofmt -w cmd internal"
+
+[tasks."fmt:check"]
+description = "Check Go formatting without changing files"
+run = '''
+set -eu
+files="$(gofmt -l cmd internal)"
+if [ -n "$files" ]; then
+  printf 'Run mise run fmt for:\n%s\n' "$files"
+  exit 1
+fi
+'''
 
 [tasks.tidy]
 description = "Tidy go.mod / go.sum"
 run = "go mod tidy"
 
 [tasks.dev]
-description = "Run the maestro server on :$MAESTRO_PORT"
-run = 'go run ./cmd/maestro --listen ":$MAESTRO_PORT" --key "$MAESTRO_KEY"'
+description = "Run the unauthenticated dev server on loopback only"
+run = 'go run ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT" --key "$MAESTRO_KEY"'
 
 [tasks.check]
-description = "Build, vet, and test"
-depends = ["build", "vet", "test"]
+description = "Check formatting, build, vet, and run uncached race tests"
+depends = ["fmt:check", "build", "vet", "test"]
 
-[tasks."milestone:1"]
+[tasks."python:gate"]
+description = "Opt-in released-Python 2.24.0/2.31.1/3.1.0 SQLite compatibility boundary"
+run = "python3 -I -S dev/tests/python/install.py"
+
+[tasks."dbosctl:gate"]
+description = "Opt-in pinned v0.10.1 dbosctl read-only CLI + fake-executor gate"
+run = "python3 -I -S dev/tests/dbosctl_gate.py"
+
+[tasks."dbosctl:real"]
+description = "Opt-in dbosctl read gate with pinned real Python SDKs (installs isolated SDKs first)"
+run = "python3 -I -S dev/tests/python/install.py && python3 -I -S dev/tests/dbosctl_gate.py --real"
+
+[tasks."demo:executor-connection"]
 description = "End-to-end demo: a real DBOS executor connects to maestro and registers"
-run = "./dev/milestone1_demo.sh"
+run = "./dev/executor_connection_demo.sh"
 
-[tasks."milestone:2"]
+[tasks."demo:observability"]
 description = "End-to-end demo: browse a real executor's workflows/steps/queues + the HTML console"
-run = "./dev/milestone2_demo.sh"
+run = "./dev/observability_demo.sh"

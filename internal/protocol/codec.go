@@ -23,8 +23,7 @@ func DecodeEnvelope(data []byte) (BaseMessage, error) {
 // Request is a frame conductor sends to an executor. It is an open map so that
 // the same primitive carries everything from a bare EXECUTOR_INFO request to a
 // richly-parameterised LIST_WORKFLOWS body. The "type" field is required; the
-// connection layer fills in "request_id". Typed builders land in M2 on top of
-// this primitive.
+// connection layer fills in "request_id". Typed builders use this primitive.
 type Request map[string]any
 
 // NewRequest builds a request frame of the given type.

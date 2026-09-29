@@ -19,7 +19,7 @@ import (
 // input/output blobs (those lazy-load on the detail page).
 const defaultPageSize = 25
 
-// knownStatuses populates the workflow-list status filter (spec §6.6).
+// knownStatuses populates the workflow-list status filter.
 var knownStatuses = []string{
 	"ENQUEUED", "PENDING", "SUCCESS", "ERROR",
 	"CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "DELAYED",
@@ -67,10 +67,13 @@ type workflowRows struct {
 }
 
 type detailData struct {
-	Live          detailLive
-	Events        []protocol.EventOutput
-	Notifications []protocol.NotificationOutput
-	Streams       []protocol.StreamEntryOutput
+	Live               detailLive
+	Events             []protocol.EventOutput
+	Notifications      []protocol.NotificationOutput
+	Streams            []protocol.StreamEntryOutput
+	EventsError        string
+	NotificationsError string
+	StreamsError       string
 }
 
 type detailLive struct {
@@ -104,7 +107,33 @@ func (s *Server) dispatch(ctx context.Context, app string, req protocol.Request,
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
-	return out.Err()
+	if err := out.Err(); err != nil {
+		return err
+	}
+	// A 3.1 metadata-only refusal normally carries error_message, but a
+	// BaseResponse-only reply must not become an empty successful read panel.
+	key := ""
+	switch out.(type) {
+	case *protocol.ListWorkflowsResponse, *protocol.GetWorkflowResponse,
+		*protocol.ListStepsResponse, *protocol.ListQueuesResponse, *protocol.GetQueueResponse:
+		key = "output"
+	case *protocol.GetWorkflowEventsResponse:
+		key = "events"
+	case *protocol.GetWorkflowNotificationsResponse:
+		key = "notifications"
+	case *protocol.GetWorkflowStreamsResponse:
+		key = "streams"
+	}
+	if key != "" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+		if _, ok := fields[key]; !ok {
+			return errors.New("executor response data unavailable")
+		}
+	}
+	return nil
 }
 
 // appsAvailable counts distinct apps with at least one connected executor (the
@@ -220,12 +249,10 @@ func (s *Server) fetchRows(ctx context.Context, app string, f filterState, offse
 		body.QueueName = []string{f.Queue}
 	}
 
-	var resp protocol.ListWorkflowsResponse
-	if err := s.dispatch(ctx, app, protocol.ListWorkflowsRequest(body), &resp); err != nil {
+	wfs, err := s.readWorkflows(ctx, app, body)
+	if err != nil {
 		return workflowRows{}, err
 	}
-
-	wfs := resp.Output
 	hasNext := len(wfs) > limit
 	if hasNext {
 		wfs = wfs[:limit]
@@ -259,23 +286,27 @@ func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Best-effort side panels; a failure here shouldn't blank the page.
+	// Side-panel refusals do not blank the detail or poison a healthy socket,
+	// but must remain visible instead of looking like an empty data set.
 	var events protocol.GetWorkflowEventsResponse
-	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowEventsRequest(id), &events)
+	eventsErr := s.dispatch(r.Context(), app, protocol.GetWorkflowEventsRequest(id), &events)
 	var notes protocol.GetWorkflowNotificationsResponse
-	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowNotificationsRequest(id), &notes)
+	notesErr := s.dispatch(r.Context(), app, protocol.GetWorkflowNotificationsRequest(id), &notes)
 	var streams protocol.GetWorkflowStreamsResponse
-	_ = s.dispatch(r.Context(), app, protocol.GetWorkflowStreamsRequest(id), &streams)
+	streamsErr := s.dispatch(r.Context(), app, protocol.GetWorkflowStreamsRequest(id), &streams)
 
 	s.web.Page(w, "workflow_detail", page{
 		Title:         id + " · Workflow",
 		AppsAvailable: s.appsAvailable(),
 		Crumbs:        detailCrumbs(app, id),
 		Data: detailData{
-			Live:          live,
-			Events:        events.Events,
-			Notifications: notes.Notifications,
-			Streams:       streams.Streams,
+			Live:               live,
+			Events:             events.Events,
+			Notifications:      notes.Notifications,
+			Streams:            streams.Streams,
+			EventsError:        errorText(eventsErr),
+			NotificationsError: errorText(notesErr),
+			StreamsError:       errorText(streamsErr),
 		},
 	})
 }
@@ -294,24 +325,22 @@ func (s *Server) handleWorkflowLive(w http.ResponseWriter, r *http.Request) {
 // buildDetailLive fetches the workflow header + steps and assembles the pollable
 // live region (status, actions, gantt timeline).
 func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (detailLive, error) {
-	var wfResp protocol.GetWorkflowResponse
-	if err := s.dispatch(ctx, app, protocol.GetWorkflowRequest(id, false, false), &wfResp); err != nil {
+	wf, err := s.readWorkflow(ctx, app, id, false, false)
+	if err != nil {
 		return detailLive{}, err
 	}
-	if wfResp.Output == nil {
+	if wf == nil {
 		return detailLive{}, fmt.Errorf("workflow %q not found", id)
 	}
 
-	var stepsResp protocol.ListStepsResponse
-	if err := s.dispatch(ctx, app, protocol.ListStepsRequest(id, false, nil, nil), &stepsResp); err != nil {
+	steps, err := s.readSteps(ctx, app, id, false, nil, nil)
+	if err != nil {
 		return detailLive{}, err
 	}
-
-	wf := wfResp.Output
 	return detailLive{
 		App:       app,
 		WF:        wf,
-		Timeline:  web.BuildTimeline(app, id, stepsResp.Output),
+		Timeline:  web.BuildTimeline(app, id, steps),
 		IsRunning: isRunning(wf.Status),
 		Flash:     flash,
 	}, nil
@@ -320,12 +349,12 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
-	var resp protocol.ListStepsResponse
-	if err := s.dispatch(r.Context(), app, protocol.ListStepsRequest(id, false, nil, nil), &resp); err != nil {
+	steps, err := s.readSteps(r.Context(), app, id, false, nil, nil)
+	if err != nil {
 		partialError(w, err)
 		return
 	}
-	s.web.Partial(w, "timeline", web.BuildTimeline(app, id, resp.Output))
+	s.web.Partial(w, "timeline", web.BuildTimeline(app, id, steps))
 }
 
 func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
@@ -335,8 +364,8 @@ func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
 
 	loadInput := kind == "input"
 	loadOutput := kind == "output"
-	var resp protocol.GetWorkflowResponse
-	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowRequest(id, loadInput, loadOutput), &resp); err != nil {
+	wf, err := s.readWorkflow(r.Context(), app, id, loadInput, loadOutput)
+	if err != nil {
 		partialError(w, err)
 		return
 	}
@@ -345,11 +374,11 @@ func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
 	if loadInput {
 		data.Title = "Input"
 	}
-	if resp.Output != nil {
+	if wf != nil {
 		if loadInput {
-			data.Content = deref(resp.Output.Input)
+			data.Content = deref(wf.Input)
 		} else {
-			data.Content = deref(resp.Output.Output)
+			data.Content = deref(wf.Output)
 		}
 	}
 	s.web.Partial(w, "blob", data)
@@ -364,7 +393,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 }
 
 // manage runs a mutating command then re-renders the live region, surfacing any
-// failure as an inline flash rather than tearing down the page (spec §3.4 P5).
+// failure as an inline flash rather than tearing down the page.
 func (s *Server) manage(w http.ResponseWriter, r *http.Request, req protocol.Request, failPrefix string) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
@@ -431,23 +460,23 @@ func (s *Server) handleAPIWorkflows(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIWorkflow(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
-	var resp protocol.GetWorkflowResponse
-	if err := s.dispatch(r.Context(), app, protocol.GetWorkflowRequest(id, true, true), &resp); err != nil {
+	wf, err := s.readWorkflow(r.Context(), app, id, true, true)
+	if err != nil {
 		s.apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp.Output)
+	writeJSON(w, http.StatusOK, wf)
 }
 
 func (s *Server) handleAPISteps(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
-	var resp protocol.ListStepsResponse
-	if err := s.dispatch(r.Context(), app, protocol.ListStepsRequest(id, true, nil, nil), &resp); err != nil {
+	steps, err := s.readSteps(r.Context(), app, id, true, nil, nil)
+	if err != nil {
 		s.apiError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp.Output)
+	writeJSON(w, http.StatusOK, steps)
 }
 
 func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
@@ -551,6 +580,13 @@ func isRunning(status *string) bool {
 		return true
 	}
 	return false
+}
+
+func errorText(err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return ""
 }
 
 func deref(s *string) string {

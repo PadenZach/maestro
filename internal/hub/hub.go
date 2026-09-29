@@ -18,8 +18,14 @@ import (
 )
 
 // ErrAppUnavailable is returned by Request when no executor of the named app is
-// connected. The application is "available" iff ≥1 live socket (spec §5.1).
+// connected. An application is available while it has at least one live socket.
 var ErrAppUnavailable = errors.New("conductor: application unavailable")
+
+var ErrHubClosed = errors.New("conductor: hub closed")
+
+// ErrUnsupportedCapability indicates that no connected peer is reviewed for
+// every requested additive field/command; silently widening a read is unsafe.
+var ErrUnsupportedCapability = errors.New("conductor: unsupported executor capability")
 
 // Hub indexes live executor connections by application name.
 type Hub struct {
@@ -27,6 +33,38 @@ type Hub struct {
 	requestTimeout time.Duration
 	mu             sync.RWMutex
 	apps           map[string]map[*Conn]struct{}
+	active         map[*Conn]struct{} // includes sockets still handshaking
+	sessions       int                // handlers admitted before upgrading; guarded with mu, never a WaitGroup Add/Wait race
+	stopping       bool
+	stopped        chan struct{}
+	keepaliveTicks func(context.Context) <-chan time.Time
+	ping           func(context.Context, *websocket.Conn) error
+}
+
+// Shutdown rejects new sessions, closes all hijacked sockets (which HTTP
+// Shutdown does not own), and waits for handlers and their transport workers.
+func (h *Hub) Shutdown(ctx context.Context) error {
+	h.mu.Lock()
+	if !h.stopping {
+		h.stopping = true
+		if h.sessions == 0 {
+			close(h.stopped)
+		}
+	}
+	conns := make([]*Conn, 0, len(h.active))
+	for c := range h.active {
+		conns = append(conns, c)
+	}
+	h.mu.Unlock()
+	for _, c := range conns {
+		c.close(ErrHubClosed)
+	}
+	select {
+	case <-h.stopped:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // New constructs an empty hub. requestTimeout bounds a single executor
@@ -39,6 +77,9 @@ func New(log *slog.Logger, requestTimeout time.Duration) *Hub {
 		log:            log,
 		requestTimeout: requestTimeout,
 		apps:           make(map[string]map[*Conn]struct{}),
+		active:         make(map[*Conn]struct{}),
+		stopped:        make(chan struct{}),
+		ping:           func(ctx context.Context, c *websocket.Conn) error { return c.Ping(ctx) },
 	}
 }
 
@@ -47,10 +88,18 @@ func New(log *slog.Logger, requestTimeout time.Duration) *Hub {
 // connection closes (keeping the HTTP handler alive for the socket's lifetime).
 // The caller must have already authenticated the conductor key.
 func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, app string) error {
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Executors are server processes (no browser Origin); accept any.
-		OriginPatterns: []string{"*"},
-	})
+	h.mu.Lock()
+	if h.stopping {
+		h.mu.Unlock()
+		http.Error(w, "server shutting down", http.StatusServiceUnavailable)
+		return ErrHubClosed
+	}
+	h.sessions++
+	h.mu.Unlock()
+	defer h.sessionDone()
+	// Absent Origin is valid for server-process executors. The default
+	// same-origin check still rejects cross-origin browser WebSockets.
+	ws, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return err
 	}
@@ -59,7 +108,22 @@ func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, app string) error {
 	ws.SetReadLimit(-1)
 
 	c := newConn(h, ws, app)
+	h.mu.Lock()
+	if h.stopping {
+		h.mu.Unlock()
+		_ = ws.CloseNow()
+		return ErrHubClosed
+	}
+	h.active[c] = struct{}{}
+	h.mu.Unlock()
 	c.start()
+	defer func() {
+		c.close(errConnClosed)
+		<-c.workersDone
+		h.mu.Lock()
+		delete(h.active, c)
+		h.mu.Unlock()
+	}()
 
 	hctx, cancel := context.WithTimeout(c.ctx, handshakeTimeout)
 	defer cancel()
@@ -69,7 +133,9 @@ func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, app string) error {
 		return err
 	}
 
-	h.register(c)
+	if !h.register(c) {
+		return ErrHubClosed
+	}
 	defer h.deregister(c)
 	h.log.Info("executor connected",
 		"app", app,
@@ -82,13 +148,37 @@ func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, app string) error {
 	return nil
 }
 
-func (h *Hub) register(c *Conn) {
+func (h *Hub) sessionDone() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.sessions--
+	if h.stopping && h.sessions == 0 {
+		close(h.stopped)
+	}
+	h.mu.Unlock()
+}
+
+func (h *Hub) register(c *Conn) bool {
+	h.mu.Lock()
+	if h.stopping || c.ctx.Err() != nil {
+		h.mu.Unlock()
+		return false
+	}
 	if h.apps[c.app] == nil {
 		h.apps[c.app] = make(map[*Conn]struct{})
 	}
+	var stale []*Conn
+	for prior := range h.apps[c.app] {
+		if prior.executor.ID == c.executor.ID {
+			delete(h.apps[c.app], prior)
+			stale = append(stale, prior)
+		}
+	}
 	h.apps[c.app][c] = struct{}{}
+	h.mu.Unlock()
+	for _, prior := range stale {
+		prior.close(errConnClosed)
+	}
+	return true
 }
 
 func (h *Hub) deregister(c *Conn) {
@@ -134,19 +224,57 @@ func (h *Hub) conns(app string) []*Conn {
 }
 
 // Request is the dispatcher: it sends a server-initiated request to a healthy
-// executor of app and returns the raw response bytes for the caller to decode
-// (spec §3.5). If no executor is connected it returns ErrAppUnavailable. Each
+// executor of app and returns the raw response bytes for the caller to decode.
+// If no executor is connected it returns ErrAppUnavailable. Each
 // attempt is bounded by the hub's requestTimeout; if the chosen socket dies
-// mid-request it retries another executor of the same app. A caller-context
+// mid-request it retries another executor only for documented pure reads. A caller-context
 // cancellation or a per-request timeout surfaces immediately rather than
 // retrying.
 func (h *Hub) Request(ctx context.Context, app string, req protocol.Request) ([]byte, error) {
+	h.mu.RLock()
+	stopping := h.stopping
+	h.mu.RUnlock()
+	if stopping {
+		return nil, ErrHubClosed
+	}
 	candidates := h.conns(app)
 	if len(candidates) == 0 {
 		return nil, ErrAppUnavailable
 	}
+	features, err := protocol.RequiredFeatures(req)
+	if err != nil {
+		return nil, err
+	}
+	// The open Request map also accepts MessageType values, which encode as
+	// strings but must be normalized for response correlation and read retries.
+	// Never modify the caller's map (it may be shared by concurrent requests).
+	if typ, ok := req["type"].(protocol.MessageType); ok {
+		copy := make(protocol.Request, len(req))
+		for key, value := range req {
+			copy[key] = value
+		}
+		copy["type"] = string(typ)
+		req = copy
+	}
 	var lastErr error
+	eligible := false
 	for _, c := range candidates {
+		c.mu.Lock()
+		executor := c.executor
+		c.mu.Unlock()
+		supported := executor != nil
+		if supported {
+			for _, feature := range features {
+				if !protocol.SupportsFeature(executor.Language, executor.DBOSVersion, feature) {
+					supported = false
+					break
+				}
+			}
+		}
+		if !supported {
+			continue
+		}
+		eligible = true
 		rctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
 		resp, err := c.roundtrip(rctx, req)
 		cancel()
@@ -156,12 +284,35 @@ func (h *Hub) Request(ctx context.Context, app string, req protocol.Request) ([]
 		lastErr = err
 		// Retry on a different executor only when this socket dropped. Timeouts
 		// and caller cancellations are surfaced so the Console sees them.
-		if errors.Is(err, errConnClosed) {
+		if errors.Is(err, errConnClosed) && retryableRead(req) {
 			continue
 		}
 		return nil, err
 	}
+	if !eligible {
+		return nil, ErrUnsupportedCapability
+	}
 	return nil, lastErr
+}
+
+// Only commands documented as pure reads may be replayed after an ambiguous
+// disconnect. Unknown commands and mutations default to no retry; a request ID
+// correlates replies but does not deduplicate executor-side effects.
+func retryableRead(req protocol.Request) bool {
+	typ, _ := req["type"].(string)
+	switch protocol.MessageType(typ) {
+	case protocol.MsgListWorkflows, protocol.MsgListQueuedWorkflows,
+		protocol.MsgGetWorkflow, protocol.MsgListSteps,
+		protocol.MsgGetWorkflowEvents, protocol.MsgGetWorkflowNotifications,
+		protocol.MsgGetWorkflowStreams, protocol.MsgListQueues, protocol.MsgGetQueue,
+		protocol.MsgExistPendingWorkflows, protocol.MsgGetWorkflowAggregates,
+		protocol.MsgGetStepAggregates, protocol.MsgGetMetrics,
+		protocol.MsgListSchedules, protocol.MsgGetSchedule,
+		protocol.MsgListApplicationVersions:
+		return true
+	default:
+		return false
+	}
 }
 
 // Executors returns a snapshot of every connected executor for the JSON API.

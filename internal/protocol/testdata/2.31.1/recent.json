@@ -1,0 +1,111 @@
+{
+  "requests": {
+    "list_workflows_recent": {
+      "type": "list_workflows",
+      "request_id": "req-sanitized",
+      "body": {
+        "sort_desc": false,
+        "load_input": false,
+        "load_output": false,
+        "queues_only": false,
+        "attributes": {
+          "region": "west",
+          "attempt": 2
+        },
+        "schedule_name": [
+          "nightly"
+        ],
+        "application_name": [
+          "app-sanitized"
+        ]
+      }
+    },
+    "list_queued_workflows_recent": {
+      "type": "list_queued_workflows",
+      "request_id": "req-sanitized",
+      "body": {
+        "sort_desc": false,
+        "load_input": false,
+        "load_output": false,
+        "attributes": {
+          "region": "west",
+          "attempt": 2
+        },
+        "schedule_name": [
+          "nightly"
+        ],
+        "application_name": [
+          "app-sanitized"
+        ]
+      }
+    },
+    "list_queues_recent": {
+      "type": "list_queues",
+      "request_id": "req-sanitized",
+      "body": {
+        "application_name": [
+          "app-sanitized"
+        ]
+      }
+    }
+  },
+  "responses": {
+    "get_workflow_recent": {
+      "type": "get_workflow",
+      "request_id": "req-sanitized",
+      "output": {
+        "WorkflowUUID": "wf-sanitized",
+        "Status": "SUCCESS",
+        "WorkflowName": "demo",
+        "WorkflowClassName": null,
+        "WorkflowConfigName": null,
+        "AuthenticatedUser": null,
+        "AssumedRole": null,
+        "AuthenticatedRoles": null,
+        "Input": null,
+        "Output": null,
+        "Error": null,
+        "CreatedAt": "123",
+        "UpdatedAt": null,
+        "QueueName": null,
+        "ApplicationVersion": null,
+        "ExecutorID": null,
+        "WorkflowTimeoutMS": null,
+        "WorkflowDeadlineEpochMS": null,
+        "DeduplicationID": null,
+        "Priority": null,
+        "QueuePartitionKey": null,
+        "ForkedFrom": null,
+        "WasForkedFrom": false,
+        "ParentWorkflowID": null,
+        "DequeuedAt": null,
+        "DelayUntilEpochMS": null,
+        "CompletedAt": null,
+        "Attributes": "{\"region\": \"west\", \"attempt\": 2}",
+        "ScheduleName": "nightly",
+        "ApplicationName": "app-sanitized"
+      },
+      "error_message": null
+    },
+    "get_queue_recent": {
+      "type": "get_queue",
+      "request_id": "req-sanitized",
+      "output": {
+        "name": "demo-queue",
+        "concurrency": null,
+        "worker_concurrency": null,
+        "rate_limit_max": null,
+        "rate_limit_period_sec": null,
+        "priority_enabled": true,
+        "partition_queue": true,
+        "polling_interval_sec": 0.5,
+        "application_name": "app-sanitized",
+        "partition_concurrency": 2,
+        "partition_worker_concurrency": 3,
+        "partition_rate_limit_max": 9,
+        "partition_rate_limit_period_sec": 1.5
+      },
+      "error_message": null
+    }
+  }
+}

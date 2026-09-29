@@ -1,1 +1,12 @@
 /bin/
+.DS_Store
+
+# Optional local SDK reference; use pinned releases for compatibility gates.
+/dbos-transact-py/
+/dev/tests/python/*/.venv/
+/dev/tests/python/.python/
+/dev/tests/python/__pycache__/
+/dev/tests/__pycache__/
+
+# Private local planning, historical handoffs and retired assistant workflow drafts.
+/.planning/
