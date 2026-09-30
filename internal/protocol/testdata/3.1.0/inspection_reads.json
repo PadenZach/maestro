@@ -1,0 +1,231 @@
+{
+  "requests": {
+    "list_schedules": {
+      "type": "list_schedules",
+      "request_id": "req-sanitized",
+      "body": {}
+    },
+    "list_schedules_all_fields": {
+      "type": "list_schedules",
+      "request_id": "req-sanitized",
+      "body": {
+        "status": [
+          "ACTIVE"
+        ],
+        "workflow_name": [
+          "demo_workflow"
+        ],
+        "schedule_name_prefix": [
+          "nightly"
+        ],
+        "application_name": [
+          "app-sanitized"
+        ],
+        "load_context": false
+      }
+    },
+    "get_schedule": {
+      "type": "get_schedule",
+      "request_id": "req-sanitized",
+      "schedule_name": "nightly-sanitized",
+      "load_context": true
+    },
+    "get_workflow_aggregates": {
+      "type": "get_workflow_aggregates",
+      "request_id": "req-sanitized",
+      "body": {}
+    },
+    "get_workflow_aggregates_all_fields": {
+      "type": "get_workflow_aggregates",
+      "request_id": "req-sanitized",
+      "body": {
+        "group_by_status": false,
+        "group_by_name": true,
+        "group_by_queue_name": false,
+        "group_by_executor_id": true,
+        "group_by_application_version": false,
+        "group_by_application_name": true,
+        "select_count": true,
+        "select_min_created_at": false,
+        "select_max_queue_wait_ms": true,
+        "select_max_total_latency_ms": false,
+        "time_bucket_size_ms": 0,
+        "status": [],
+        "start_time": "2026-01-01T00:00:00Z",
+        "end_time": "2026-01-02T00:00:00Z",
+        "completed_after": "2026-01-03T00:00:00Z",
+        "completed_before": "2026-01-04T00:00:00Z",
+        "dequeued_after": "2026-01-05T00:00:00Z",
+        "dequeued_before": "2026-01-06T00:00:00Z",
+        "name": [
+          "demo_workflow"
+        ],
+        "app_version": [
+          "app-v1"
+        ],
+        "executor_id": [
+          "exec-sanitized"
+        ],
+        "queue_name": [
+          "demo-queue"
+        ],
+        "workflow_id_prefix": [
+          "wf-"
+        ],
+        "workflow_ids": [
+          "wf-sanitized"
+        ],
+        "forked_from": [
+          "source-wf"
+        ],
+        "parent_workflow_id": [
+          "parent-wf"
+        ],
+        "user": [
+          "user-sanitized"
+        ],
+        "schedule_name": [
+          "nightly-sanitized"
+        ],
+        "application_name": [
+          "app-sanitized"
+        ],
+        "was_forked_from": false,
+        "has_parent": false,
+        "attributes": {}
+      }
+    },
+    "get_step_aggregates": {
+      "type": "get_step_aggregates",
+      "request_id": "req-sanitized",
+      "body": {}
+    },
+    "get_step_aggregates_all_fields": {
+      "type": "get_step_aggregates",
+      "request_id": "req-sanitized",
+      "body": {
+        "group_by_function_name": false,
+        "group_by_status": true,
+        "select_count": false,
+        "select_max_duration_ms": true,
+        "time_bucket_size_ms": 0,
+        "status": [],
+        "function_name": [
+          "demo_step"
+        ],
+        "workflow_id_prefix": [
+          "wf-"
+        ],
+        "completed_after": "2026-02-01T00:00:00Z",
+        "completed_before": "2026-02-02T00:00:00Z",
+        "application_name": [
+          "app-sanitized"
+        ]
+      }
+    },
+    "export_workflow": {
+      "type": "export_workflow",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "export_children": false
+    },
+    "export_workflow_children": {
+      "type": "export_workflow",
+      "request_id": "req-sanitized",
+      "workflow_id": "wf-sanitized",
+      "export_children": true
+    }
+  },
+  "responses": {
+    "list_schedules": {
+      "type": "list_schedules",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "schedule_id": "schedule-id-sanitized",
+          "schedule_name": "nightly-sanitized",
+          "workflow_name": "demo_workflow",
+          "workflow_class_name": null,
+          "schedule": "0 0 * * *",
+          "status": "ACTIVE",
+          "context": null,
+          "last_fired_at": "2026-03-01T00:00:00Z",
+          "automatic_backfill": false,
+          "cron_timezone": null,
+          "queue_name": "demo-queue",
+          "application_name": "app-sanitized"
+        }
+      ],
+      "error_message": null
+    },
+    "get_schedule": {
+      "type": "get_schedule",
+      "request_id": "req-sanitized",
+      "output": {
+        "schedule_id": "schedule-id-sanitized",
+        "schedule_name": "nightly-sanitized",
+        "workflow_name": "demo_workflow",
+        "workflow_class_name": null,
+        "schedule": "0 0 * * *",
+        "status": "ACTIVE",
+        "context": null,
+        "last_fired_at": "2026-03-01T00:00:00Z",
+        "automatic_backfill": false,
+        "cron_timezone": null,
+        "queue_name": "demo-queue",
+        "application_name": "app-sanitized"
+      },
+      "error_message": null
+    },
+    "get_schedule_missing": {
+      "type": "get_schedule",
+      "request_id": "req-sanitized",
+      "output": null,
+      "error_message": null
+    },
+    "get_workflow_aggregates": {
+      "type": "get_workflow_aggregates",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "group": {
+            "status": "SUCCESS",
+            "queue_name": null
+          },
+          "count": 0,
+          "min_created_at": null,
+          "max_queue_wait_ms": 0,
+          "max_total_latency_ms": null
+        }
+      ],
+      "error_message": null
+    },
+    "get_step_aggregates": {
+      "type": "get_step_aggregates",
+      "request_id": "req-sanitized",
+      "output": [
+        {
+          "group": {
+            "function_name": "demo_step",
+            "status": null
+          },
+          "count": 0,
+          "max_duration_ms": null
+        }
+      ],
+      "error_message": null
+    },
+    "export_workflow": {
+      "type": "export_workflow",
+      "request_id": "req-sanitized",
+      "serialized_workflow": "H4sIAOpaqueSDKSerializedData==\nnot-decoded",
+      "error_message": null
+    },
+    "export_workflow_missing": {
+      "type": "export_workflow",
+      "request_id": "req-sanitized",
+      "serialized_workflow": null,
+      "error_message": null
+    }
+  }
+}

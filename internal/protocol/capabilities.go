@@ -12,10 +12,14 @@ import (
 type Feature string
 
 const (
-	FeatureWorkflowFilters Feature = "recent workflow filters"
-	FeatureQueueAppFilter  Feature = "queue application filter"
-	FeatureRestart         Feature = "legacy restart"
-	FeatureRewind          Feature = "rewind"
+	FeatureWorkflowFilters    Feature = "recent workflow filters"
+	FeatureQueueAppFilter     Feature = "queue application filter"
+	FeatureRestart            Feature = "legacy restart"
+	FeatureRewind             Feature = "rewind"
+	FeatureScheduleReads      Feature = "schedule reads"
+	FeatureWorkflowAggregates Feature = "workflow aggregates"
+	FeatureStepAggregates     Feature = "step aggregates"
+	FeatureWorkflowExport     Feature = "workflow export"
 )
 
 var sdkSemver = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
@@ -40,6 +44,8 @@ func SupportsFeature(language, sdkVersion string, feature Feature) bool {
 	case FeatureRestart:
 		return major == 2 && minor == 24 && patch == 0 || major == 2 && minor == 31 && patch == 1
 	case FeatureRewind:
+		return major == 3 && minor == 1 && patch == 0
+	case FeatureScheduleReads, FeatureWorkflowAggregates, FeatureStepAggregates, FeatureWorkflowExport:
 		return major == 3 && minor == 1 && patch == 0
 	}
 	return false
@@ -66,6 +72,14 @@ func RequiredFeatures(req Request) ([]Feature, error) {
 		return []Feature{FeatureRestart}, nil
 	case MsgRewindWorkflow:
 		return []Feature{FeatureRewind}, nil
+	case MsgListSchedules, MsgGetSchedule:
+		return []Feature{FeatureScheduleReads}, nil
+	case MsgGetWorkflowAggregates:
+		return []Feature{FeatureWorkflowAggregates}, nil
+	case MsgGetStepAggregates:
+		return []Feature{FeatureStepAggregates}, nil
+	case MsgExportWorkflow:
+		return []Feature{FeatureWorkflowExport}, nil
 	case MsgListWorkflows, MsgListQueuedWorkflows, MsgListQueues:
 		body, ok := req["body"].(map[string]any)
 		if !ok && req["body"] != nil {
