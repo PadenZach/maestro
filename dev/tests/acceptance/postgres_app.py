@@ -18,11 +18,14 @@ from dbos._conductor.protocol import (
     NotificationOutput,
     QueueOutput,
     ScheduleOutput,
+    StepAggregateOutput,
     StreamEntryOutput,
+    WorkflowAggregateOutput,
     WorkflowsOutput,
     WorkflowSteps,
 )
 from dbos._workflow_commands import get_workflow
+from websockets.sync.connection import Connection
 
 config = {
     "name": os.environ["POSTGRES_GATE_APP"],
@@ -75,6 +78,31 @@ def wire_digest(value) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+# gzip embeds a current-time header, so separate calls to export_workflow do not
+# produce a stable blob. Observe the released handler's outbound SDK frame and
+# publish only its string digest; never decode, normalize, or persist the blob.
+_original_connection_send = Connection.send
+
+
+def observing_connection_send(self, message, *args, **kwargs):
+    if isinstance(message, str):
+        try:
+            frame = json.loads(message)
+        except (json.JSONDecodeError, TypeError):
+            frame = None
+        if isinstance(frame, dict) and frame.get("type") == "export_workflow":
+            serialized = frame.get("serialized_workflow")
+            if isinstance(serialized, str):
+                digest_path = Path(os.environ["POSTGRES_GATE_EXPORT_DIGEST"])
+                pending_path = digest_path.with_suffix(".tmp")
+                pending_path.write_text(hashlib.sha256(serialized.encode()).hexdigest())
+                pending_path.replace(digest_path)
+    return _original_connection_send(self, message, *args, **kwargs)
+
+
+Connection.send = observing_connection_send
+
+
 try:
     DBOS.launch()
     gate_queue = DBOS.register_queue(
@@ -119,7 +147,9 @@ try:
     # notifications, with no timing sleep or direct database write.
     notification_handle = edge_queue.enqueue(gate_notification_target)
     DBOS.send(notification_handle.workflow_id, "notification-null-topic", topic=None)
-    DBOS.send(notification_handle.workflow_id, {"notification": "empty-topic"}, topic="")
+    DBOS.send(
+        notification_handle.workflow_id, {"notification": "empty-topic"}, topic=""
+    )
     pending_notifications = dbos._sys_db.get_all_notifications(
         notification_handle.workflow_id
     )
@@ -172,6 +202,71 @@ try:
         ).encode()
         queue_sha256[queue.name] = hashlib.sha256(encoded).hexdigest()
 
+    workflow_aggregate_options = {
+        "group_by_status": True,
+        "group_by_name": True,
+        "group_by_executor_id": True,
+        "group_by_application_version": True,
+        "group_by_application_name": True,
+        "select_count": True,
+        "select_min_created_at": True,
+        "select_max_queue_wait_ms": True,
+        "select_max_total_latency_ms": True,
+        "time_bucket_size_ms": 60_000,
+        "status": ["SUCCESS"],
+        "start_time": "2000-01-01T00:00:00+00:00",
+        "end_time": "2100-01-01T00:00:00+00:00",
+        "completed_after": "2000-01-01T00:00:00+00:00",
+        "completed_before": "2100-01-01T00:00:00+00:00",
+        "name": ["gate_workflow"],
+        "app_version": ["postgres-gate-v1"],
+        "workflow_id_prefix": [handle.workflow_id[:8]],
+        "workflow_ids": [handle.workflow_id],
+        "was_forked_from": False,
+        "has_parent": False,
+    }
+    workflow_aggregate_rows = dbos._sys_db.get_workflow_aggregates(
+        **workflow_aggregate_options
+    )
+    assert len(workflow_aggregate_rows) == 1
+    workflow_aggregate_wire = [
+        asdict(
+            WorkflowAggregateOutput(
+                group=row["group"],
+                count=row["count"],
+                min_created_at=row["min_created_at"],
+                max_queue_wait_ms=row["max_queue_wait_ms"],
+                max_total_latency_ms=row["max_total_latency_ms"],
+            )
+        )
+        for row in workflow_aggregate_rows
+    ]
+
+    step_aggregate_options = {
+        "group_by_function_name": True,
+        "group_by_status": True,
+        "select_count": True,
+        "select_max_duration_ms": True,
+        "time_bucket_size_ms": 60_000,
+        "status": ["SUCCESS"],
+        "function_name": ["gate_step"],
+        "workflow_id_prefix": [handle.workflow_id[:8]],
+        "completed_after": "2000-01-01T00:00:00+00:00",
+        "completed_before": "2100-01-01T00:00:00+00:00",
+    }
+    step_aggregate_rows = dbos._sys_db.get_step_aggregates(**step_aggregate_options)
+    assert len(step_aggregate_rows) == 1
+    step_aggregate_wire = [
+        asdict(
+            StepAggregateOutput(
+                group=row["group"],
+                count=row["count"],
+                max_duration_ms=row["max_duration_ms"],
+            )
+        )
+        for row in step_aggregate_rows
+    ]
+
     schedule_sha256 = {}
     for schedule_name in ("gate-schedule-context", "gate-schedule-null"):
         schedule = dbos._sys_db.get_schedule(schedule_name)
@@ -212,6 +307,8 @@ try:
         "stream_sha256": stream_sha256,
         "queue_sha256": queue_sha256,
         "schedule_sha256": schedule_sha256,
+        "workflow_aggregate_sha256": wire_digest(workflow_aggregate_wire),
+        "step_aggregate_sha256": wire_digest(step_aggregate_wire),
     }
     ready_path = Path(os.environ["POSTGRES_GATE_READY"])
     pending_path = ready_path.with_suffix(".tmp")

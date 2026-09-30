@@ -240,9 +240,19 @@ def wait_for(check, deadline, label):
     raise AssertionError(f"timed out waiting for {label} ({last})")
 
 
-def request_json_response(base, path):
+def request_json_response(base, path, *, method="GET", payload=None):
+    data = None
+    headers = {}
+    if payload is not None:
+        data = json.dumps(
+            payload, separators=(",", ":"), allow_nan=False
+        ).encode()
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(
+        base + path, data=data, headers=headers, method=method
+    )
     try:
-        with HTTP.open(base + path, timeout=3) as response:
+        with HTTP.open(request, timeout=3) as response:
             return (
                 response.status,
                 response.headers.get_content_type(),
@@ -433,14 +443,10 @@ def _validate_official_related(record, schema_name):
             valid = isinstance(value, list)
             if valid:
                 item_type = property_schema["items"]["type"]
-                valid = all(
-                    _matches_json_type(item, [item_type]) for item in value
-                )
+                valid = all(_matches_json_type(item, [item_type]) for item in value)
         else:
             valid = _matches_json_type(value, allowed)
-        assert valid, (
-            f"Official {schema_name}.{field} violates pinned schema"
-        )
+        assert valid, f"Official {schema_name}.{field} violates pinned schema"
         if property_schema.get("format") == "date-time" and value is not None:
             assert _is_rfc3339(value), (
                 f"Official {schema_name}.{field} violates pinned schema"
@@ -472,9 +478,8 @@ def _notification_created_at_epoch_ms(created_at):
         "Official notification field values differ from SDK NotificationOutput"
     )
     return (
-        (delta.days * 24 * 60 * 60 + delta.seconds) * 1000
-        + delta.microseconds // 1000
-    )
+        delta.days * 24 * 60 * 60 + delta.seconds
+    ) * 1000 + delta.microseconds // 1000
 
 
 def validate_official_notification(notification, expected_sdk_digest):
@@ -496,6 +501,117 @@ def validate_official_stream(stream, expected_sdk_digest):
     _validate_official_related(stream, "StreamEntry")
     assert _sdk_wire_digest(stream) == expected_sdk_digest, (
         "Official stream field values differ from SDK StreamEntryOutput"
+    )
+
+
+def _pinned_inspection_schema(schema_name):
+    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
+    return json.loads(snapshot.read_text())["components"]["schemas"][schema_name]
+
+
+def _validate_official_aggregate(record, schema_name):
+    schema = _pinned_inspection_schema(schema_name)
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(record, dict), (
+        f"Official {schema_name} response must be an object"
+    )
+    assert required <= set(record) <= set(properties), (
+        f"Official {schema_name} fields differ from pinned schema"
+    )
+    group = record.get("group")
+    assert isinstance(group, dict), f"Official {schema_name}.group violates pinned schema"
+    assert all(
+        isinstance(key, str) and (value is None or isinstance(value, str))
+        for key, value in group.items()
+    ), f"Official {schema_name}.group violates pinned schema"
+    for field, value in record.items():
+        if field == "group":
+            continue
+        property_schema = properties[field]
+        allowed = property_schema["type"]
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        assert _matches_json_type(value, allowed), (
+            f"Official {schema_name}.{field} violates pinned schema"
+        )
+        if property_schema.get("format") == "date-time":
+            assert _is_rfc3339(value), (
+                f"Official {schema_name}.{field} violates pinned schema"
+            )
+
+
+def _aggregate_created_at_epoch_ms(created_at):
+    parsed = datetime.datetime.fromisoformat(
+        created_at[:-1] + "+00:00" if created_at.endswith("Z") else created_at
+    )
+    utc = parsed.astimezone(datetime.timezone.utc)
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    delta = utc - epoch
+    assert delta.microseconds % 1000 == 0, (
+        "Official workflow aggregate field values differ from SDK WorkflowAggregateOutput"
+    )
+    return (
+        (delta.days * 24 * 60 * 60 + delta.seconds) * 1000
+        + delta.microseconds // 1000
+    )
+
+
+def validate_official_workflow_aggregates(aggregates, expected_sdk_digest):
+    assert isinstance(aggregates, list), "Official WorkflowAggregate response must be an array"
+    wire = []
+    for aggregate in aggregates:
+        _validate_official_aggregate(aggregate, "WorkflowAggregate")
+        wire.append(
+            {
+                "group": aggregate["group"],
+                "count": aggregate.get("count"),
+                "min_created_at": (
+                    _aggregate_created_at_epoch_ms(aggregate["minCreatedAt"])
+                    if "minCreatedAt" in aggregate
+                    else None
+                ),
+                "max_queue_wait_ms": aggregate.get("maxQueueWaitMs"),
+                "max_total_latency_ms": aggregate.get("maxTotalLatencyMs"),
+            }
+        )
+    assert _sdk_wire_digest(wire) == expected_sdk_digest, (
+        "Official workflow aggregate field values differ from SDK WorkflowAggregateOutput"
+    )
+
+
+def validate_official_step_aggregates(aggregates, expected_sdk_digest):
+    assert isinstance(aggregates, list), "Official StepAggregate response must be an array"
+    wire = []
+    for aggregate in aggregates:
+        _validate_official_aggregate(aggregate, "StepAggregate")
+        wire.append(
+            {
+                "group": aggregate["group"],
+                "count": aggregate.get("count"),
+                "max_duration_ms": aggregate.get("maxDurationMs"),
+            }
+        )
+    assert _sdk_wire_digest(wire) == expected_sdk_digest, (
+        "Official step aggregate field values differ from SDK StepAggregateOutput"
+    )
+
+
+def validate_official_export(exported, expected_sdk_digest):
+    schema = _pinned_inspection_schema("ExportWorkflowOutputBody")
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(exported, dict), "Official export response must be an object"
+    assert required <= set(exported) <= set(properties), (
+        "Official export fields differ from pinned schema"
+    )
+    serialized = exported.get("serializedWorkflow")
+    assert isinstance(serialized, str), (
+        "Official export serializedWorkflow violates pinned schema"
+    )
+    actual_digest = hashlib.sha256(serialized.encode()).hexdigest()
+    assert actual_digest == expected_sdk_digest, (
+        "Official export bytes differ from observed SDK export frame"
     )
 
 
@@ -597,6 +713,7 @@ def run_case(
     bad_queue_field,
     bad_schedule_field,
     bad_related_field,
+    bad_inspection_field,
     environment,
 ):
     temp.mkdir(mode=0o700)
@@ -607,6 +724,7 @@ def run_case(
     app = "postgres-gate-" + token
     executor = "postgres-executor-" + token
     ready_path = temp / "ready.json"
+    export_digest_path = temp / "export-frame.sha256"
     case_env = dict(environment)
     case_env.update(
         HOME=str(temp),
@@ -615,6 +733,7 @@ def run_case(
         POSTGRES_GATE_EXECUTOR=executor,
         POSTGRES_GATE_DATABASE_URL=database_url,
         POSTGRES_GATE_READY=str(ready_path),
+        POSTGRES_GATE_EXPORT_DIGEST=str(export_digest_path),
         # Deliberately named as a test-only seam; never consumed as application setup.
         POSTGRES_GATE_TEST_WS=base.replace("http:", "ws:"),
         POSTGRES_GATE_KEY=key,
@@ -984,19 +1103,16 @@ def run_case(
             event_digests = ready["event_sha256"]
             notification_digests = ready["notification_sha256"]
             stream_digests = ready["stream_sha256"]
-            assert (
-                isinstance(event_digests, dict)
-                and set(event_digests) == {"gate-event"}
-            ), "SDK event digest manifest"
-            assert (
-                isinstance(notification_digests, dict)
-                and set(notification_digests) == {"null-topic", "empty-topic"}
-            ), "SDK notification digest manifest"
-            assert (
-                isinstance(stream_digests, dict)
-                and set(stream_digests)
-                == {"gate-stream", "gate-empty-stream"}
-            ), "SDK stream digest manifest"
+            assert isinstance(event_digests, dict) and set(event_digests) == {
+                "gate-event"
+            }, "SDK event digest manifest"
+            assert isinstance(notification_digests, dict) and set(
+                notification_digests
+            ) == {"null-topic", "empty-topic"}, "SDK notification digest manifest"
+            assert isinstance(stream_digests, dict) and set(stream_digests) == {
+                "gate-stream",
+                "gate-empty-stream",
+            }, "SDK stream digest manifest"
 
             official_workflow_root = (
                 "/v2/orgs/local/apps/"
@@ -1037,8 +1153,8 @@ def run_case(
                         f"official metadata-only {related_name} refusal detail"
                     )
             else:
-                related_status, content_type, official_events = (
-                    request_json_response(base, official_related_paths["events"])
+                related_status, content_type, official_events = request_json_response(
+                    base, official_related_paths["events"]
                 )
                 assert (
                     related_status == 200
@@ -1053,9 +1169,7 @@ def run_case(
                     validate_official_event(event, event_digests[event["key"]])
 
                 related_status, content_type, official_notifications = (
-                    request_json_response(
-                        base, official_related_paths["notifications"]
-                    )
+                    request_json_response(base, official_related_paths["notifications"])
                 )
                 assert (
                     related_status == 200
@@ -1087,8 +1201,8 @@ def run_case(
                     "official nullable/empty notification topics"
                 )
 
-                related_status, content_type, official_streams = (
-                    request_json_response(base, official_related_paths["streams"])
+                related_status, content_type, official_streams = request_json_response(
+                    base, official_related_paths["streams"]
                 )
                 assert (
                     related_status == 200
@@ -1118,15 +1232,12 @@ def run_case(
                         checked_stream, stream_digests[stream["key"]]
                     )
 
-                empty_related_root = (
-                    official_workflow_root
-                    + urllib.parse.quote(empty_related_workflow_id, safe="")
+                empty_related_root = official_workflow_root + urllib.parse.quote(
+                    empty_related_workflow_id, safe=""
                 )
                 for related_name in ("events", "notifications", "streams"):
-                    related_status, content_type, empty_related = (
-                        request_json_response(
-                            base, empty_related_root + "/" + related_name
-                        )
+                    related_status, content_type, empty_related = request_json_response(
+                        base, empty_related_root + "/" + related_name
                     )
                     assert (
                         related_status == 200
@@ -1156,6 +1267,236 @@ def run_case(
                     400,
                     f"official {related_name} unsupported query",
                 )
+
+            workflow_aggregate_digest = ready["workflow_aggregate_sha256"]
+            step_aggregate_digest = ready["step_aggregate_sha256"]
+            assert (
+                isinstance(workflow_aggregate_digest, str)
+                and len(workflow_aggregate_digest) == 64
+                and isinstance(step_aggregate_digest, str)
+                and len(step_aggregate_digest) == 64
+            ), "SDK aggregate digest manifest"
+
+            official_app_root = (
+                "/v2/orgs/local/apps/" + urllib.parse.quote(app, safe="")
+            )
+            workflow_aggregate_path = official_app_root + "/workflows/aggregates"
+            workflow_aggregate_body = {
+                "groupByStatus": True,
+                "groupByWorkflowName": True,
+                "groupByExecutorId": True,
+                "groupByAppVersion": True,
+                "groupByApplicationName": True,
+                "selectCount": True,
+                "selectMinCreatedAt": True,
+                "selectMaxQueueWaitMs": True,
+                "selectMaxTotalLatencyMs": True,
+                "timeBucketSizeMs": 60_000,
+                "status": ["SUCCESS"],
+                "startTime": "2000-01-01T00:00:00+00:00",
+                "endTime": "2100-01-01T00:00:00+00:00",
+                "completedAfter": "2000-01-01T00:00:00+00:00",
+                "completedBefore": "2100-01-01T00:00:00+00:00",
+                "workflowName": ["gate_workflow"],
+                "appVersion": ["postgres-gate-v1"],
+                "workflowIdPrefix": [workflow_id[:8]],
+                "workflowIds": [workflow_id],
+                "wasForkedFrom": False,
+                "hasParent": False,
+            }
+            aggregate_status, content_type, workflow_aggregates = (
+                request_json_response(
+                    base,
+                    workflow_aggregate_path,
+                    method="POST",
+                    payload=workflow_aggregate_body,
+                )
+            )
+            assert (
+                aggregate_status == 200
+                and content_type == "application/json"
+                and isinstance(workflow_aggregates, list)
+                and len(workflow_aggregates) == 1
+            ), "official workflow aggregate response"
+            checked_workflow_aggregates = workflow_aggregates
+            if bad_inspection_field:
+                checked_workflow_aggregates = [dict(workflow_aggregates[0])]
+                checked_workflow_aggregates[0]["count"] += 1
+            validate_official_workflow_aggregates(
+                checked_workflow_aggregates, workflow_aggregate_digest
+            )
+
+            step_aggregate_path = official_app_root + "/steps/aggregates"
+            step_aggregate_body = {
+                "groupByFunctionName": True,
+                "groupByStatus": True,
+                "selectCount": True,
+                "selectMaxDurationMs": True,
+                "timeBucketSizeMs": 60_000,
+                "status": ["SUCCESS"],
+                "stepName": ["gate_step"],
+                "workflowIdPrefix": [workflow_id[:8]],
+                "completedAfter": "2000-01-01T00:00:00+00:00",
+                "completedBefore": "2100-01-01T00:00:00+00:00",
+            }
+            aggregate_status, content_type, step_aggregates = request_json_response(
+                base,
+                step_aggregate_path,
+                method="POST",
+                payload=step_aggregate_body,
+            )
+            assert (
+                aggregate_status == 200
+                and content_type == "application/json"
+                and isinstance(step_aggregates, list)
+                and len(step_aggregates) == 1
+            ), "official step aggregate response"
+            validate_official_step_aggregates(
+                step_aggregates, step_aggregate_digest
+            )
+
+            # The released handlers default to count only when every select flag
+            # is omitted. Restrict by workflow ID so the independent fixture
+            # expectation is exactly one without reading maestro-owned storage.
+            aggregate_status, _, default_count = request_json_response(
+                base,
+                workflow_aggregate_path,
+                method="POST",
+                payload={
+                    "groupByStatus": True,
+                    "workflowIds": [workflow_id],
+                },
+            )
+            assert (
+                aggregate_status == 200
+                and default_count
+                == [{"group": {"status": "SUCCESS"}, "count": 1}]
+            ), "released SDK workflow aggregate default count"
+
+            for path, payload, label in (
+                (
+                    workflow_aggregate_path,
+                    {
+                        "groupByStatus": True,
+                        "selectCount": True,
+                        "status": ["NO_MATCHING_STATUS"],
+                    },
+                    "workflow",
+                ),
+                (
+                    step_aggregate_path,
+                    {
+                        "groupByStatus": True,
+                        "selectCount": True,
+                        "status": ["NO_MATCHING_STATUS"],
+                    },
+                    "step",
+                ),
+            ):
+                aggregate_status, content_type, empty_aggregates = (
+                    request_json_response(
+                        base, path, method="POST", payload=payload
+                    )
+                )
+                assert (
+                    aggregate_status == 200
+                    and content_type == "application/json"
+                    and empty_aggregates == []
+                ), f"official empty {label} aggregates"
+
+            for path, payload, label in (
+                (
+                    workflow_aggregate_path,
+                    {"unknown": True},
+                    "workflow aggregate unknown field",
+                ),
+                (
+                    step_aggregate_path,
+                    {"completedAfter": "not-a-date"},
+                    "step aggregate invalid date",
+                ),
+            ):
+                aggregate_status, content_type, problem = request_json_response(
+                    base, path, method="POST", payload=payload
+                )
+                validate_problem_response(
+                    aggregate_status, content_type, problem, 400, label
+                )
+            aggregate_status, content_type, problem = request_json_response(
+                base,
+                workflow_aggregate_path,
+                method="POST",
+                payload={},
+            )
+            validate_problem_response(
+                aggregate_status,
+                content_type,
+                problem,
+                502,
+                "released SDK aggregate missing grouping",
+            )
+
+            export_path = (
+                official_workflow_root
+                + urllib.parse.quote(workflow_id, safe="")
+                + "/export"
+            )
+            if export_digest_path.exists():
+                export_digest_path.unlink()
+            export_status, content_type, exported = request_json_response(
+                base, export_path + "?exportChildren=true"
+            )
+            if metadata_only:
+                validate_problem_response(
+                    export_status,
+                    content_type,
+                    exported,
+                    502,
+                    "official metadata-only export refusal",
+                )
+                assert "metadata-only mode" in exported["detail"], (
+                    "official metadata-only export refusal detail"
+                )
+                assert not export_digest_path.exists(), (
+                    "metadata-only refusal emitted an export blob"
+                )
+            else:
+                assert (
+                    export_status == 200
+                    and content_type == "application/json"
+                    and isinstance(exported, dict)
+                ), "official workflow export response"
+                observed_export_digest = wait_for(
+                    lambda: (
+                        export_digest_path.read_text().strip()
+                        if export_digest_path.is_file()
+                        else None
+                    ),
+                    time.monotonic() + 3,
+                    "observed SDK export frame digest",
+                )
+                validate_official_export(exported, observed_export_digest)
+
+            export_status, content_type, problem = request_json_response(
+                base, official_workflow_root + "missing-workflow/export"
+            )
+            validate_problem_response(
+                export_status,
+                content_type,
+                problem,
+                404,
+                "official missing workflow export",
+            )
+            export_status, content_type, problem = request_json_response(
+                base, export_path + "?exportChildren=true&exportChildren=false"
+            )
+            validate_problem_response(
+                export_status,
+                content_type,
+                problem,
+                400,
+                "official duplicate export option",
+            )
 
             status, events = request_json(base, workflow_path + "/events")
             if metadata_only:
@@ -1251,6 +1592,7 @@ def worker(
     bad_queue_field,
     bad_schedule_field,
     bad_related_field,
+    bad_inspection_field,
 ):
     pg_bin, python = required_tool_paths(os.environ)
     environment = sanitized_environment(os.environ, temp)
@@ -1331,6 +1673,7 @@ def worker(
                     bad_queue_field and not metadata_only,
                     bad_schedule_field and not metadata_only,
                     bad_related_field and not metadata_only,
+                    bad_inspection_field and not metadata_only,
                     environment,
                 )
         except BaseException as exc:
@@ -1349,7 +1692,8 @@ def worker(
     print(
         "PASS PostgreSQL 18 + dbos==3.1.0 "
         "workflows/get/steps/official-queues/official-schedules/"
-        "official-events/notifications/streams/opaque-digests/metadata-refusal"
+        "official-events/notifications/streams/workflow-aggregates/"
+        "step-aggregates/opaque-export/opaque-digests/metadata-refusal"
     )
 
 
@@ -1379,6 +1723,11 @@ def main():
         action="store_true",
         help="negative-control: corrupt one actual official stream field",
     )
+    parser.add_argument(
+        "--probe-bad-inspection-field",
+        action="store_true",
+        help="negative-control: corrupt one actual official workflow aggregate field",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -1391,6 +1740,7 @@ def main():
             args.probe_bad_queue_field,
             args.probe_bad_schedule_field,
             args.probe_bad_related_field,
+            args.probe_bad_inspection_field,
         )
         return
 
@@ -1423,6 +1773,8 @@ def main():
             command.append("--probe-bad-schedule-field")
         if args.probe_bad_related_field:
             command.append("--probe-bad-related-field")
+        if args.probe_bad_inspection_field:
+            command.append("--probe-bad-inspection-field")
         run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
 
 
