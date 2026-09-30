@@ -7,6 +7,7 @@ not provide a plaintext fallback for application setup or deployment.
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -238,12 +239,114 @@ def wait_for(check, deadline, label):
     raise AssertionError(f"timed out waiting for {label} ({last})")
 
 
-def request_json(base, path):
+def request_json_response(base, path):
     try:
         with HTTP.open(base + path, timeout=3) as response:
-            return response.status, json.load(response)
+            return response.status, response.headers.get_content_type(), json.load(response)
     except urllib.error.HTTPError as exc:
-        return exc.code, json.load(exc)
+        return exc.code, exc.headers.get_content_type(), json.load(exc)
+
+
+def request_json(base, path):
+    status, _, payload = request_json_response(base, path)
+    return status, payload
+
+
+QUEUE_HTTP_TO_WIRE = {
+    "name": "name",
+    "concurrency": "concurrency",
+    "workerConcurrency": "worker_concurrency",
+    "rateLimitMax": "rate_limit_max",
+    "rateLimitPeriodSecs": "rate_limit_period_sec",
+    "priorityEnabled": "priority_enabled",
+    "partitionQueue": "partition_queue",
+    "pollingIntervalSecs": "polling_interval_sec",
+    "applicationName": "application_name",
+    "partitionConcurrency": "partition_concurrency",
+    "partitionWorkerConcurrency": "partition_worker_concurrency",
+    "partitionRateLimitMax": "partition_rate_limit_max",
+    "partitionRateLimitPeriodSecs": "partition_rate_limit_period_sec",
+}
+
+
+def _pinned_queue_schema():
+    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
+    return json.loads(snapshot.read_text())["components"]["schemas"]["Queue"]
+
+
+def _matches_json_type(value, allowed):
+    if value is None:
+        return "null" in allowed
+    if isinstance(value, bool):
+        return "boolean" in allowed
+    if isinstance(value, int):
+        return "integer" in allowed or "number" in allowed
+    if isinstance(value, float):
+        return "number" in allowed and math.isfinite(value)
+    if isinstance(value, str):
+        return "string" in allowed
+    return False
+
+
+def validate_official_queue(queue, expected_sdk_digest):
+    """Validate one official Queue response against pinned OpenAPI and SDK wire."""
+    schema = _pinned_queue_schema()
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(queue, dict), "Official Queue response must be an object"
+    assert required <= set(queue) <= set(properties), (
+        "Official Queue fields differ from pinned schema"
+    )
+    for field, value in queue.items():
+        allowed = properties[field]["type"]
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        assert _matches_json_type(value, allowed), (
+            f"Official Queue.{field} violates pinned schema"
+        )
+        field_format = properties[field].get("format")
+        if field_format == "int32" and value is not None:
+            assert -(2**31) <= value < 2**31, (
+                f"Official Queue.{field} violates pinned schema"
+            )
+        if field_format == "double" and value is not None:
+            assert isinstance(value, (int, float)) and not isinstance(value, bool), (
+                f"Official Queue.{field} violates pinned schema"
+            )
+            assert math.isfinite(value), (
+                f"Official Queue.{field} violates pinned schema"
+            )
+
+    wire = {
+        wire_field: queue[http_field]
+        for http_field, wire_field in QUEUE_HTTP_TO_WIRE.items()
+    }
+    encoded = json.dumps(
+        wire, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    actual_digest = hashlib.sha256(encoded).hexdigest()
+    assert actual_digest == expected_sdk_digest, (
+        "Official queue field values differ from SDK QueueOutput"
+    )
+
+
+def validate_problem_response(status, content_type, problem, expected_status, label):
+    assert status == expected_status, f"{label} status"
+    assert content_type == "application/problem+json", f"{label} content type"
+    assert isinstance(problem, dict) and set(problem) == {
+        "type",
+        "title",
+        "status",
+        "detail",
+    }, f"{label} problem fields"
+    assert problem["type"] == "about:blank", f"{label} problem type"
+    assert problem["status"] == expected_status, f"{label} problem status"
+    assert isinstance(problem["title"], str) and problem["title"], (
+        f"{label} problem title"
+    )
+    assert isinstance(problem["detail"], str) and problem["detail"], (
+        f"{label} problem detail"
+    )
 
 
 def stop_process(proc, timeout=10, *, terminate=True, label="owned child"):
@@ -316,7 +419,14 @@ def create_database(pg_bin, socket_dir, pg_port, database, environment):
 
 
 def run_case(
-    python, binary, temp, database_url, metadata_only, bad_digest, environment
+    python,
+    binary,
+    temp,
+    database_url,
+    metadata_only,
+    bad_digest,
+    bad_queue_field,
+    environment,
 ):
     temp.mkdir(mode=0o700)
     port = reserve_loopback_port()
@@ -351,7 +461,14 @@ def run_case(
         (temp / "sdk.log").open("w+") as sdk_log,
     ):
         server = subprocess.Popen(
-            [str(binary), "--listen", f"127.0.0.1:{port}", "--key", key],
+            [
+                str(binary),
+                "--listen",
+                f"127.0.0.1:{port}",
+                "--key",
+                key,
+                "--local-http-v2",
+            ],
             cwd=ROOT,
             env=case_env,
             stdout=subprocess.PIPE,
@@ -449,8 +566,89 @@ def run_case(
                 "released SDK queue fields"
             )
 
+            queue_digests = ready["queue_sha256"]
+            assert isinstance(queue_digests, dict) and set(queue_digests) == {
+                "gate-queue",
+                "gate-edge-queue",
+            }, "SDK queue digest manifest"
+            official_root = (
+                "/v2/orgs/local/apps/"
+                + urllib.parse.quote(app, safe="")
+                + "/queues"
+            )
+            status, content_type, official_queues = request_json_response(
+                base, official_root
+            )
+            assert (
+                status == 200
+                and content_type == "application/json"
+                and isinstance(official_queues, list)
+                and all(isinstance(row, dict) for row in official_queues)
+            ), "official queue list response"
+            assert {
+                row.get("name") for row in official_queues
+            } == set(queue_digests), "official queue list matches SDK registrations"
+            official_by_name = {row["name"]: row for row in official_queues}
+            for name, digest in queue_digests.items():
+                validate_official_queue(official_by_name[name], digest)
+
+            official_gate_queue = official_by_name["gate-queue"]
+            assert (
+                official_gate_queue["rateLimitPeriodSecs"] == 1.5
+                and official_gate_queue["partitionRateLimitPeriodSecs"] == 2.5
+                and official_gate_queue["pollingIntervalSecs"] == 0.25
+            ), "official queue fractional fields were not preserved"
+            official_edge_queue = official_by_name["gate-edge-queue"]
+            assert (
+                official_edge_queue["concurrency"] == 0
+                and official_edge_queue["rateLimitMax"] == 0
+                and official_edge_queue["workerConcurrency"] is None
+                and official_edge_queue["partitionConcurrency"] is None
+                and official_edge_queue["partitionQueue"] is False
+                and official_edge_queue["pollingIntervalSecs"] == 0.125
+            ), "official queue null/fractional/false/zero fields were not preserved"
+
+            status, content_type, official_queue = request_json_response(
+                base, official_root + "/gate-queue"
+            )
+            assert (
+                status == 200
+                and content_type == "application/json"
+                and isinstance(official_queue, dict)
+            ), "official queue get response"
+            if bad_queue_field and not metadata_only:
+                official_queue = dict(official_queue)
+                official_queue["partitionRateLimitMax"] = 0
+            validate_official_queue(
+                official_queue, queue_digests["gate-queue"]
+            )
+
+            status, content_type, problem = request_json_response(
+                base, official_root + "/missing-queue"
+            )
+            validate_problem_response(
+                status,
+                content_type,
+                problem,
+                404,
+                "official missing queue",
+            )
+            status, content_type, problem = request_json_response(
+                base, official_root + "?applicationName=other"
+            )
+            validate_problem_response(
+                status,
+                content_type,
+                problem,
+                400,
+                "official queue unsupported query",
+            )
+
             status, events = request_json(base, workflow_path + "/events")
             if metadata_only:
+                assert official_gate_queue["applicationName"] == app, (
+                    "metadata-only mode hid nonprivate queue configuration"
+                )
                 assert detail["Input"] is None and detail["Output"] is None, (
                     "metadata-only workflow blobs were exposed"
                 )
@@ -534,7 +732,7 @@ def run_case(
             )
 
 
-def worker(temp, bad_digest):
+def worker(temp, bad_digest, bad_queue_field):
     pg_bin, python = required_tool_paths(os.environ)
     environment = sanitized_environment(os.environ, temp)
     validate_postgres_bin(pg_bin, environment)
@@ -611,6 +809,7 @@ def worker(temp, bad_digest):
                     postgres_database_url(socket_dir, pg_port, database),
                     metadata_only,
                     bad_digest and not metadata_only,
+                    bad_queue_field and not metadata_only,
                     environment,
                 )
         except BaseException as exc:
@@ -628,7 +827,7 @@ def worker(temp, bad_digest):
             )
     print(
         "PASS PostgreSQL 18 + dbos==3.1.0 "
-        "workflows/get/steps/queues/events/opaque-digests/metadata-refusal"
+        "workflows/get/steps/official-queues/events/opaque-digests/metadata-refusal"
     )
 
 
@@ -643,13 +842,22 @@ def main():
         action="store_true",
         help="negative-control: corrupt the expected workflow Input digest",
     )
+    parser.add_argument(
+        "--probe-bad-queue-field",
+        action="store_true",
+        help="negative-control: corrupt one actual official queue field",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.worker:
         if args.temp is None:
             raise RuntimeError("worker requires its owned temporary directory")
-        worker(args.temp, args.probe_bad_expected_digest)
+        worker(
+            args.temp,
+            args.probe_bad_expected_digest,
+            args.probe_bad_queue_field,
+        )
         return
 
     pg_bin, python = required_tool_paths(os.environ)
@@ -675,6 +883,8 @@ def main():
         ]
         if args.probe_bad_expected_digest:
             command.append("--probe-bad-expected-digest")
+        if args.probe_bad_queue_field:
+            command.append("--probe-bad-queue-field")
         run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
 
 

@@ -19,7 +19,10 @@ def _conductor_url(environ: Mapping[str, str]) -> str:
         or not conductor_url
         or "?" in conductor_url
         or "#" in conductor_url
-        or any(ord(character) <= 0x20 or ord(character) == 0x7F for character in conductor_url)
+        or any(
+            ord(character) <= 0x20 or ord(character) == 0x7F
+            for character in conductor_url
+        )
     ):
         raise ValueError(_URL_ERROR)
 

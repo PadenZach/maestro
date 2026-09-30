@@ -9,10 +9,16 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from dbos import DBOS
-from dbos._conductor.protocol import EventOutput, WorkflowsOutput, WorkflowSteps
+from dbos._conductor.protocol import (
+    EventOutput,
+    QueueOutput,
+    WorkflowsOutput,
+    WorkflowSteps,
+)
 from dbos._workflow_commands import get_workflow
 
 config = {
@@ -42,14 +48,21 @@ def gate_workflow(value: str) -> str:
 
 try:
     DBOS.launch()
-    DBOS.register_queue(
+    gate_queue = DBOS.register_queue(
         "gate-queue",
         global_concurrency=3,
         worker_concurrency=2,
         partition_concurrency=2,
         partition_worker_concurrency=1,
-        limiter={"limit": 5, "period": 1.0},
-        partition_limiter={"limit": 4, "period": 2.0},
+        limiter={"limit": 5, "period": 1.5},
+        partition_limiter={"limit": 4, "period": 2.5},
+        polling_interval_sec=0.25,
+    )
+    edge_queue = DBOS.register_queue(
+        "gate-edge-queue",
+        global_concurrency=0,
+        limiter={"limit": 0, "period": 0.5},
+        polling_interval_sec=0.125,
     )
     handle = DBOS.start_workflow(gate_workflow, "gate-input-value")
     assert handle.get_result() == "gate-step-value"
@@ -69,7 +82,16 @@ try:
 
     event_values = dbos._sys_db.get_all_events(handle.workflow_id)
     event_wire = EventOutput.from_event_data("gate-event", event_values["gate-event"])
-    # Only identifiers and digests of SDK-produced wire strings cross this
+
+    queue_sha256 = {}
+    for queue in (gate_queue, edge_queue):
+        queue_wire = asdict(QueueOutput.from_queue(queue))
+        encoded = json.dumps(
+            queue_wire, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode()
+        queue_sha256[queue.name] = hashlib.sha256(encoded).hexdigest()
+
+    # Only identifiers and digests of SDK-produced wire values cross this
     # temporary SDK-to-gate channel. No payload or credential is published.
     ready = {
         "workflow_id": handle.workflow_id,
@@ -77,6 +99,7 @@ try:
         "output_sha256": hashlib.sha256(workflow_wire.Output.encode()).hexdigest(),
         "step_output_sha256": hashlib.sha256(step_wire.output.encode()).hexdigest(),
         "event_value_sha256": hashlib.sha256(event_wire.value.encode()).hexdigest(),
+        "queue_sha256": queue_sha256,
     }
     ready_path = Path(os.environ["POSTGRES_GATE_READY"])
     pending_path = ready_path.with_suffix(".tmp")

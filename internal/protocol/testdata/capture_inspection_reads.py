@@ -34,7 +34,9 @@ def load_protocol(directory: Path):
         sys.modules[module_name] = types.ModuleType(module_name)
     serialization = sys.modules["dbos._serialization"]
     vars(serialization)["Serializer"] = type("Serializer", (), {})
-    vars(serialization)["safe_deserialize_schedule_context"] = lambda *args, **kwargs: None
+    vars(serialization)["safe_deserialize_schedule_context"] = (
+        lambda *args, **kwargs: None
+    )
     sys_db = sys.modules["dbos._sys_db"]
     for name in (
         "NotificationInfo",

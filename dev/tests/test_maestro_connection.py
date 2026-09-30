@@ -16,7 +16,9 @@ configure_conductor = maestro_connection.configure_conductor
 
 
 class ConfigureConductorTests(unittest.TestCase):
-    def test_explicit_environment_overrides_connection_fields_and_preserves_config(self):
+    def test_explicit_environment_overrides_connection_fields_and_preserves_config(
+        self,
+    ):
         workflow_settings = {"max_recovery_attempts": 12}
         config = {
             "name": "orders",
@@ -180,9 +182,7 @@ class ConfigureConductorTests(unittest.TestCase):
 
     def test_conductor_key_is_required_from_environment_without_format_rules(self):
         config = {"name": "orders"}
-        supplied_environment = {
-            "DBOS_CONDUCTOR_URL": "wss://maestro.example.test"
-        }
+        supplied_environment = {"DBOS_CONDUCTOR_URL": "wss://maestro.example.test"}
         with self.assertRaises(KeyError) as failure:
             configure_conductor(config, supplied_environment)
         self.assertEqual(failure.exception.args, ("DBOS_CONDUCTOR_KEY",))
