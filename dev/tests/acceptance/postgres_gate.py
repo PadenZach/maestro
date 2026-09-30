@@ -242,7 +242,11 @@ def wait_for(check, deadline, label):
 def request_json_response(base, path):
     try:
         with HTTP.open(base + path, timeout=3) as response:
-            return response.status, response.headers.get_content_type(), json.load(response)
+            return (
+                response.status,
+                response.headers.get_content_type(),
+                json.load(response),
+            )
     except urllib.error.HTTPError as exc:
         return exc.code, exc.headers.get_content_type(), json.load(exc)
 
@@ -572,9 +576,7 @@ def run_case(
                 "gate-edge-queue",
             }, "SDK queue digest manifest"
             official_root = (
-                "/v2/orgs/local/apps/"
-                + urllib.parse.quote(app, safe="")
-                + "/queues"
+                "/v2/orgs/local/apps/" + urllib.parse.quote(app, safe="") + "/queues"
             )
             status, content_type, official_queues = request_json_response(
                 base, official_root
@@ -585,9 +587,9 @@ def run_case(
                 and isinstance(official_queues, list)
                 and all(isinstance(row, dict) for row in official_queues)
             ), "official queue list response"
-            assert {
-                row.get("name") for row in official_queues
-            } == set(queue_digests), "official queue list matches SDK registrations"
+            assert {row.get("name") for row in official_queues} == set(queue_digests), (
+                "official queue list matches SDK registrations"
+            )
             official_by_name = {row["name"]: row for row in official_queues}
             for name, digest in queue_digests.items():
                 validate_official_queue(official_by_name[name], digest)
@@ -619,9 +621,7 @@ def run_case(
             if bad_queue_field and not metadata_only:
                 official_queue = dict(official_queue)
                 official_queue["partitionRateLimitMax"] = 0
-            validate_official_queue(
-                official_queue, queue_digests["gate-queue"]
-            )
+            validate_official_queue(official_queue, queue_digests["gate-queue"])
 
             status, content_type, problem = request_json_response(
                 base, official_root + "/missing-queue"

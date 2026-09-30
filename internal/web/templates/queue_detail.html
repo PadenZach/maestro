@@ -1,0 +1,32 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$q := $d.Queue}}
+<div class="detail-head">
+  <div>
+    <h1 class="page-title">{{$q.Name}}</h1>
+    <div class="detail-sub subtle">Queue</div>
+  </div>
+  <a class="link queue-workflows-link" href="{{$d.QueuedWorkflowsURL}}">View queued workflows ›</a>
+</div>
+
+<section class="panel">
+  <h2>Configuration</h2>
+  <table class="data-table">
+    <tbody>
+      <tr><th>Queue name</th><td class="mono" data-field="name">{{$q.Name}}</td></tr>
+      <tr><th>Application name</th><td class="mono" data-field="applicationName">{{if $q.ApplicationName}}{{$q.ApplicationName}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Concurrency</th><td data-field="concurrency">{{if $q.Concurrency}}{{$q.Concurrency}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Worker concurrency</th><td data-field="workerConcurrency">{{if $q.WorkerConcurrency}}{{$q.WorkerConcurrency}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Rate limit maximum</th><td data-field="rateLimitMax">{{if $q.RateLimitMax}}{{$q.RateLimitMax}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Rate limit period (seconds)</th><td data-field="rateLimitPeriodSecs">{{if $q.RateLimitPeriodSec}}{{$q.RateLimitPeriodSec}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Priority enabled</th><td data-field="priorityEnabled">{{if $q.PriorityEnabled}}Yes{{else}}No{{end}}</td></tr>
+      <tr><th>Deprecated partition queue</th><td data-field="partitionQueue">{{if $q.PartitionQueue}}Yes{{else}}No{{end}}</td></tr>
+      <tr><th>Polling interval (seconds)</th><td data-field="pollingIntervalSecs">{{$q.PollingIntervalSec}}</td></tr>
+      <tr><th>Partition concurrency</th><td data-field="partitionConcurrency">{{if $q.PartitionConcurrency}}{{$q.PartitionConcurrency}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Partition worker concurrency</th><td data-field="partitionWorkerConcurrency">{{if $q.PartitionWorkerConcurrency}}{{$q.PartitionWorkerConcurrency}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Partition rate limit maximum</th><td data-field="partitionRateLimitMax">{{if $q.PartitionRateLimitMax}}{{$q.PartitionRateLimitMax}}{{else}}Unlimited{{end}}</td></tr>
+      <tr><th>Partition rate limit period (seconds)</th><td data-field="partitionRateLimitPeriodSecs">{{if $q.PartitionRateLimitPeriodSec}}{{$q.PartitionRateLimitPeriodSec}}{{else}}Unavailable{{end}}</td></tr>
+    </tbody>
+  </table>
+</section>
+{{end}}

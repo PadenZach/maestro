@@ -3,17 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{.Title}} · DBOS Console</title>
+  <title>{{.Title}} · maestro</title>
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">DBOS</div>
-    <div class="topbar-conductor">
-      <span class="topbar-label">Conductor</span>
-      <span class="dot {{if gt .AppsAvailable 0}}dot-on{{end}}"></span>
-      <span class="topbar-avail">{{.AppsAvailable}} Available</span>
+    <div class="brand">maestro</div>
+    <div class="application-status" aria-label="{{.Status.Label}}">
+      <span class="status-dot status-{{.Status.State}}" aria-hidden="true"></span>
+      <span>Applications online</span>
     </div>
   </header>
 

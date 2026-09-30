@@ -24,14 +24,14 @@
   <tbody>
     {{range $d.Queues}}
     <tr>
-      <td class="mono">{{.Name}}</td>
+      <td class="mono"><a class="link queue-detail-link" href="{{$d.QueueDetailURL .Name}}">{{.Name}}</a></td>
       <td>{{if .Concurrency}}{{.Concurrency}}{{else}}∞{{end}}</td>
       <td>{{if .WorkerConcurrency}}{{.WorkerConcurrency}}{{else}}∞{{end}}</td>
       <td>{{if .RateLimitMax}}{{.RateLimitMax}}/{{.RateLimitPeriodSec}}s{{else}}—{{end}}</td>
       <td>{{if .PriorityEnabled}}yes{{else}}no{{end}}</td>
       <td>{{if .PartitionQueue}}yes{{else}}no{{end}}</td>
       <td>{{.PollingIntervalSec}}</td>
-      <td><a class="link" href="/apps/{{$d.App}}/workflows?queue={{.Name}}">View queued ›</a></td>
+      <td><a class="link queue-workflows-link" href="{{$d.QueuedWorkflowsURL .Name}}">View queued ›</a></td>
     </tr>
     {{end}}
   </tbody>

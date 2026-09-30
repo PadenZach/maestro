@@ -1,10 +1,10 @@
 {{define "content"}}
 {{$d := .Data}}
 <h1 class="page-title">Applications</h1>
-<p class="subtle">DBOS applications with at least one connected executor.</p>
+<p class="subtle">Applications with at least one connected executor.</p>
 
 {{if not $d.Apps}}
-  <div class="empty">No applications connected. Start a DBOS executor pointed at this conductor.</div>
+  <div class="empty">No applications connected. Start an executor configured to connect to maestro.</div>
 {{else}}
 <div class="card-grid">
   {{range $d.Apps}}

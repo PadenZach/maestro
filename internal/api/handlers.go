@@ -29,9 +29,11 @@ var knownStatuses = []string{
 
 type crumb struct{ Label, Href string }
 
+// page carries shared navigation and a connection-status snapshot for HTML views.
 type page struct {
 	Title         string
 	AppsAvailable int
+	Status        uiStatus
 	Crumbs        []crumb
 	Data          any
 }
@@ -136,8 +138,7 @@ func (s *Server) dispatch(ctx context.Context, app string, req protocol.Request,
 	return nil
 }
 
-// appsAvailable counts distinct apps with at least one connected executor (the
-// "N Available" figure in the top bar).
+// appsAvailable preserves the distinct ready-app count used by page models.
 func (s *Server) appsAvailable() int {
 	seen := map[string]struct{}{}
 	for _, e := range s.hub.Executors() {
@@ -156,8 +157,9 @@ func (s *Server) renderErrorPage(w http.ResponseWriter, crumbs []crumb, err erro
 	s.web.Page(w, "error", page{
 		Title:         "Error",
 		AppsAvailable: s.appsAvailable(),
+		Status:        s.statusForPage(true),
 		Crumbs:        crumbs,
-		Data:          errorData{Message: err.Error()},
+		Data:          errorData{Message: htmlErrorText(err)},
 	})
 }
 
@@ -166,7 +168,7 @@ type errorData struct{ Message string }
 // partialError writes a small inline error fragment for HTMX swaps.
 func partialError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(err.Error()))
+	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(htmlErrorText(err)))
 }
 
 // --- HTML handlers ----------------------------------------------------------
@@ -188,6 +190,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	s.web.Page(w, "apps", page{
 		Title:         "Applications",
 		AppsAvailable: len(names),
+		Status:        s.statusForPage(false),
 		Crumbs:        []crumb{{Label: "Home"}},
 		Data:          appsData{Apps: apps},
 	})
@@ -204,6 +207,7 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	s.web.Page(w, "workflows", page{
 		Title:         app + " · Workflows",
 		AppsAvailable: s.appsAvailable(),
+		Status:        s.statusForPage(false),
 		Crumbs:        workflowsCrumbs(app),
 		Data: workflowsData{
 			App:      app,
@@ -298,15 +302,16 @@ func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 	s.web.Page(w, "workflow_detail", page{
 		Title:         id + " · Workflow",
 		AppsAvailable: s.appsAvailable(),
+		Status:        s.statusForPage(eventsErr != nil || notesErr != nil || streamsErr != nil),
 		Crumbs:        detailCrumbs(app, id),
 		Data: detailData{
 			Live:               live,
 			Events:             events.Events,
 			Notifications:      notes.Notifications,
 			Streams:            streams.Streams,
-			EventsError:        errorText(eventsErr),
-			NotificationsError: errorText(notesErr),
-			StreamsError:       errorText(streamsErr),
+			EventsError:        htmlErrorText(eventsErr),
+			NotificationsError: htmlErrorText(notesErr),
+			StreamsError:       htmlErrorText(streamsErr),
 		},
 	})
 }
@@ -401,7 +406,7 @@ func (s *Server) manage(w http.ResponseWriter, r *http.Request, req protocol.Req
 	flash := ""
 	var resp protocol.SuccessResponse
 	if err := s.dispatch(r.Context(), app, req, &resp); err != nil {
-		flash = failPrefix + err.Error()
+		flash = failPrefix + htmlErrorText(err)
 	}
 	live, err := s.buildDetailLive(r.Context(), app, id, flash)
 	if err != nil {
@@ -421,6 +426,7 @@ func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
 	s.web.Page(w, "queues", page{
 		Title:         app + " · Queues",
 		AppsAvailable: s.appsAvailable(),
+		Status:        s.statusForPage(false),
 		Crumbs:        queuesCrumbs(app),
 		Data:          queuesData{App: app, Queues: resp.Output},
 	})
@@ -580,13 +586,6 @@ func isRunning(status *string) bool {
 		return true
 	}
 	return false
-}
-
-func errorText(err error) string {
-	if err != nil {
-		return err.Error()
-	}
-	return ""
 }
 
 func deref(s *string) string {
