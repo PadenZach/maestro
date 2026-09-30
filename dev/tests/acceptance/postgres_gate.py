@@ -5,6 +5,7 @@ not provide a plaintext fallback for application setup or deployment.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -334,6 +335,76 @@ def validate_official_queue(queue, expected_sdk_digest):
     )
 
 
+SCHEDULE_HTTP_TO_WIRE = {
+    "scheduleId": "schedule_id",
+    "scheduleName": "schedule_name",
+    "workflowName": "workflow_name",
+    "workflowClass": "workflow_class_name",
+    "cronExpression": "schedule",
+    "status": "status",
+    "context": "context",
+    "lastFiredAt": "last_fired_at",
+    "automaticBackfill": "automatic_backfill",
+    "cronTimezone": "cron_timezone",
+    "applicationName": "application_name",
+}
+
+
+def _pinned_schedule_schema():
+    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
+    return json.loads(snapshot.read_text())["components"]["schemas"]["Schedule"]
+
+
+def _is_rfc3339(value):
+    if not isinstance(value, str) or re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})",
+        value,
+    ) is None:
+        return False
+    try:
+        parsed = datetime.datetime.fromisoformat(
+            value[:-1] + "+00:00" if value.endswith("Z") else value
+        )
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None
+
+
+def validate_official_schedule(schedule, expected_sdk_digest):
+    """Validate one official Schedule response against pinned OpenAPI and SDK wire."""
+    schema = _pinned_schedule_schema()
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(schedule, dict), "Official Schedule response must be an object"
+    assert required <= set(schedule) <= set(properties), (
+        "Official Schedule fields differ from pinned schema"
+    )
+    for field, value in schedule.items():
+        allowed = properties[field]["type"]
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        assert _matches_json_type(value, allowed), (
+            f"Official Schedule.{field} violates pinned schema"
+        )
+        if properties[field].get("format") == "date-time" and value is not None:
+            assert _is_rfc3339(value), (
+                f"Official Schedule.{field} violates pinned schema"
+            )
+
+    wire = {
+        wire_field: schedule[http_field]
+        for http_field, wire_field in SCHEDULE_HTTP_TO_WIRE.items()
+    }
+    encoded = json.dumps(
+        wire, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    actual_digest = hashlib.sha256(encoded).hexdigest()
+    assert actual_digest == expected_sdk_digest, (
+        "Official schedule field values differ from SDK ScheduleOutput"
+    )
+
+
 def validate_problem_response(status, content_type, problem, expected_status, label):
     assert status == expected_status, f"{label} status"
     assert content_type == "application/problem+json", f"{label} content type"
@@ -430,6 +501,7 @@ def run_case(
     metadata_only,
     bad_digest,
     bad_queue_field,
+    bad_schedule_field,
     environment,
 ):
     temp.mkdir(mode=0o700)
@@ -459,6 +531,7 @@ def run_case(
         "gate-input-value",
         "gate-step-value",
         "gate-event-value",
+        "schedule-context-value",
     )
     with (
         (temp / "maestro.log").open("w+") as maestro_log,
@@ -644,6 +717,177 @@ def run_case(
                 "official queue unsupported query",
             )
 
+            schedule_digests = ready["schedule_sha256"]
+            schedule_names = {
+                "gate-schedule-context",
+                "gate-schedule-null",
+            }
+            assert (
+                isinstance(schedule_digests, dict)
+                and set(schedule_digests) == schedule_names
+                and all(
+                    isinstance(digests, dict)
+                    and set(digests) == {"context", "without_context"}
+                    for digests in schedule_digests.values()
+                )
+            ), "SDK schedule digest manifest"
+            official_schedule_root = (
+                "/v2/orgs/local/apps/"
+                + urllib.parse.quote(app, safe="")
+                + "/schedules"
+            )
+            status, content_type, official_schedules = request_json_response(
+                base, official_schedule_root
+            )
+            assert (
+                status == 200
+                and content_type == "application/json"
+                and isinstance(official_schedules, list)
+                and all(isinstance(row, dict) for row in official_schedules)
+            ), "official schedule list response"
+            assert {
+                row.get("scheduleName") for row in official_schedules
+            } == schedule_names, "official schedule list matches SDK registrations"
+            official_schedules_by_name = {
+                row["scheduleName"]: row for row in official_schedules
+            }
+            digest_label = "without_context" if metadata_only else "context"
+            for name, digests in schedule_digests.items():
+                validate_official_schedule(
+                    official_schedules_by_name[name], digests[digest_label]
+                )
+
+            schedule_with_context = official_schedules_by_name[
+                "gate-schedule-context"
+            ]
+            schedule_with_null = official_schedules_by_name["gate-schedule-null"]
+            assert (
+                schedule_with_context["automaticBackfill"] is False
+                and schedule_with_context["cronTimezone"] == "UTC"
+                and schedule_with_context["workflowClass"] is None
+                and schedule_with_context["lastFiredAt"] is None
+                and schedule_with_null["automaticBackfill"] is False
+                and schedule_with_null["cronTimezone"] is None
+            ), "official schedule nullable/false fields were not preserved"
+            if metadata_only:
+                assert (
+                    schedule_with_context["context"] is None
+                    and schedule_with_null["context"] is None
+                ), "metadata-only schedule context was exposed"
+            else:
+                # The released handler applies str() after SDK deserialization,
+                # so even a schedule created with context=None is an opaque
+                # nonempty string when context loading is enabled.
+                assert (
+                    isinstance(schedule_with_context["context"], str)
+                    and schedule_with_context["context"]
+                    and isinstance(schedule_with_null["context"], str)
+                    and schedule_with_null["context"]
+                ), "official schedule context missing"
+
+            for name, digests in schedule_digests.items():
+                status, content_type, official_schedule = request_json_response(
+                    base,
+                    official_schedule_root + "/" + urllib.parse.quote(name, safe=""),
+                )
+                assert (
+                    status == 200
+                    and content_type == "application/json"
+                    and isinstance(official_schedule, dict)
+                ), "official schedule get response"
+                if (
+                    bad_schedule_field
+                    and not metadata_only
+                    and name == "gate-schedule-context"
+                ):
+                    official_schedule = dict(official_schedule)
+                    official_schedule["automaticBackfill"] = True
+                validate_official_schedule(
+                    official_schedule,
+                    digests[digest_label],
+                )
+
+            filter_query = urllib.parse.urlencode(
+                {
+                    "status": "ACTIVE",
+                    "workflowName": "gate_scheduled",
+                    "scheduleNamePrefix": "gate-schedule-",
+                    "loadContext": "false",
+                }
+            )
+            status, content_type, filtered_schedules = request_json_response(
+                base, official_schedule_root + "?" + filter_query
+            )
+            assert (
+                status == 200
+                and content_type == "application/json"
+                and isinstance(filtered_schedules, list)
+                and {
+                    row.get("scheduleName") for row in filtered_schedules
+                }
+                == schedule_names
+            ), "official schedule filters"
+            for schedule in filtered_schedules:
+                assert schedule["context"] is None, (
+                    "official loadContext=false exposed context"
+                )
+                validate_official_schedule(
+                    schedule,
+                    schedule_digests[schedule["scheduleName"]][
+                        "without_context"
+                    ],
+                )
+
+            empty_query = urllib.parse.urlencode(
+                {"scheduleNamePrefix": "missing-schedule-prefix"}
+            )
+            status, content_type, empty_schedules = request_json_response(
+                base, official_schedule_root + "?" + empty_query
+            )
+            assert (
+                status == 200
+                and content_type == "application/json"
+                and empty_schedules == []
+            ), "official empty schedule list"
+
+            status, content_type, problem = request_json_response(
+                base, official_schedule_root + "/missing-schedule"
+            )
+            validate_problem_response(
+                status,
+                content_type,
+                problem,
+                404,
+                "official missing schedule",
+            )
+            for query, label in (
+                ("applicationName=other", "official schedule unknown query"),
+                (
+                    "status=ACTIVE&status=PAUSED",
+                    "official schedule repeated query",
+                ),
+            ):
+                status, content_type, problem = request_json_response(
+                    base, official_schedule_root + "?" + query
+                )
+                validate_problem_response(
+                    status,
+                    content_type,
+                    problem,
+                    400,
+                    label,
+                )
+            status, content_type, problem = request_json_response(
+                base, official_schedule_root + "/gate-schedule-context?loadContext=false"
+            )
+            validate_problem_response(
+                status,
+                content_type,
+                problem,
+                400,
+                "official schedule get unsupported query",
+            )
+
             status, events = request_json(base, workflow_path + "/events")
             if metadata_only:
                 assert official_gate_queue["applicationName"] == app, (
@@ -732,7 +976,7 @@ def run_case(
             )
 
 
-def worker(temp, bad_digest, bad_queue_field):
+def worker(temp, bad_digest, bad_queue_field, bad_schedule_field):
     pg_bin, python = required_tool_paths(os.environ)
     environment = sanitized_environment(os.environ, temp)
     validate_postgres_bin(pg_bin, environment)
@@ -810,6 +1054,7 @@ def worker(temp, bad_digest, bad_queue_field):
                     metadata_only,
                     bad_digest and not metadata_only,
                     bad_queue_field and not metadata_only,
+                    bad_schedule_field and not metadata_only,
                     environment,
                 )
         except BaseException as exc:
@@ -827,7 +1072,8 @@ def worker(temp, bad_digest, bad_queue_field):
             )
     print(
         "PASS PostgreSQL 18 + dbos==3.1.0 "
-        "workflows/get/steps/official-queues/events/opaque-digests/metadata-refusal"
+        "workflows/get/steps/official-queues/official-schedules/events/"
+        "opaque-digests/metadata-refusal"
     )
 
 
@@ -847,6 +1093,11 @@ def main():
         action="store_true",
         help="negative-control: corrupt one actual official queue field",
     )
+    parser.add_argument(
+        "--probe-bad-schedule-field",
+        action="store_true",
+        help="negative-control: corrupt one actual official schedule field",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -857,6 +1108,7 @@ def main():
             args.temp,
             args.probe_bad_expected_digest,
             args.probe_bad_queue_field,
+            args.probe_bad_schedule_field,
         )
         return
 
@@ -885,6 +1137,8 @@ def main():
             command.append("--probe-bad-expected-digest")
         if args.probe_bad_queue_field:
             command.append("--probe-bad-queue-field")
+        if args.probe_bad_schedule_field:
+            command.append("--probe-bad-schedule-field")
         run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
 
 

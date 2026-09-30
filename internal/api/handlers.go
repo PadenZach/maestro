@@ -117,7 +117,8 @@ func (s *Server) dispatch(ctx context.Context, app string, req protocol.Request,
 	key := ""
 	switch out.(type) {
 	case *protocol.ListWorkflowsResponse, *protocol.GetWorkflowResponse,
-		*protocol.ListStepsResponse, *protocol.ListQueuesResponse, *protocol.GetQueueResponse:
+		*protocol.ListStepsResponse, *protocol.ListQueuesResponse, *protocol.GetQueueResponse,
+		*protocol.ListSchedulesResponse, *protocol.GetScheduleResponse:
 		key = "output"
 	case *protocol.GetWorkflowEventsResponse:
 		key = "events"

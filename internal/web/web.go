@@ -28,6 +28,7 @@ var embedded embed.FS
 // parsed set so multiple {{define "content"}} blocks don't collide.
 var pageFiles = map[string]string{
 	"apps":            "templates/apps.html",
+	"application":     "templates/application.html",
 	"workflows":       "templates/workflows.html",
 	"workflow_detail": "templates/workflow_detail.html",
 	"queues":          "templates/queues.html",

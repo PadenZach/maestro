@@ -16,6 +16,7 @@ from dbos import DBOS
 from dbos._conductor.protocol import (
     EventOutput,
     QueueOutput,
+    ScheduleOutput,
     WorkflowsOutput,
     WorkflowSteps,
 )
@@ -46,6 +47,11 @@ def gate_workflow(value: str) -> str:
     return gate_step(value)
 
 
+@DBOS.workflow()
+def gate_scheduled(when, context) -> str:
+    return "scheduled"
+
+
 try:
     DBOS.launch()
     gate_queue = DBOS.register_queue(
@@ -63,6 +69,22 @@ try:
         global_concurrency=0,
         limiter={"limit": 0, "period": 0.5},
         polling_interval_sec=0.125,
+    )
+    DBOS.create_schedule(
+        schedule_name="gate-schedule-context",
+        workflow_fn=gate_scheduled,
+        schedule="0 0 1 1 *",
+        context={"gate": "schedule-context-value"},
+        automatic_backfill=False,
+        cron_timezone="UTC",
+        queue_name=gate_queue.name,
+    )
+    DBOS.create_schedule(
+        schedule_name="gate-schedule-null",
+        workflow_fn=gate_scheduled,
+        schedule="0 0 1 1 *",
+        context=None,
+        automatic_backfill=False,
     )
     handle = DBOS.start_workflow(gate_workflow, "gate-input-value")
     assert handle.get_result() == "gate-step-value"
@@ -91,6 +113,31 @@ try:
         ).encode()
         queue_sha256[queue.name] = hashlib.sha256(encoded).hexdigest()
 
+    schedule_sha256 = {}
+    for schedule_name in ("gate-schedule-context", "gate-schedule-null"):
+        schedule = dbos._sys_db.get_schedule(schedule_name)
+        assert schedule is not None
+        digests = {}
+        for label, load_context in (("context", True), ("without_context", False)):
+            schedule_wire = asdict(
+                ScheduleOutput.from_schedule(
+                    schedule,
+                    dbos._sys_db.serializer,
+                    load_context=load_context,
+                )
+            )
+            # queue_name is a required SDK key but is absent from the pinned
+            # official HTTP Schedule schema.
+            del schedule_wire["queue_name"]
+            encoded = json.dumps(
+                schedule_wire,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+            digests[label] = hashlib.sha256(encoded).hexdigest()
+        schedule_sha256[schedule_name] = digests
+
     # Only identifiers and digests of SDK-produced wire values cross this
     # temporary SDK-to-gate channel. No payload or credential is published.
     ready = {
@@ -100,6 +147,7 @@ try:
         "step_output_sha256": hashlib.sha256(step_wire.output.encode()).hexdigest(),
         "event_value_sha256": hashlib.sha256(event_wire.value.encode()).hexdigest(),
         "queue_sha256": queue_sha256,
+        "schedule_sha256": schedule_sha256,
     }
     ready_path = Path(os.environ["POSTGRES_GATE_READY"])
     pending_path = ready_path.with_suffix(".tmp")

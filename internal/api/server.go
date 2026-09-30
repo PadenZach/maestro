@@ -47,6 +47,8 @@ func (s *Server) routes() {
 
 	// Console (HTML, HTMX-enhanced).
 	s.mux.HandleFunc("GET /{$}", s.handleHome)
+	s.mux.HandleFunc("GET /apps/{app}", s.handleApplication)
+	s.mux.HandleFunc("GET /apps/{app}/{$}", s.handleApplication)
 	s.mux.HandleFunc("GET /apps/{app}/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/rows", s.handleWorkflowRows)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}", s.handleWorkflowDetail)
@@ -61,6 +63,8 @@ func (s *Server) routes() {
 
 	// The official HTTP subset is an explicit loopback-only test adapter.
 	if s.cfg.LocalHTTPV2 {
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/schedules", s.localV2Schedules)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/schedules/{name}", s.localV2GetSchedule)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues", s.localV2Queues)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues/{name}", s.localV2GetQueue)
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/search", s.localV2Search)

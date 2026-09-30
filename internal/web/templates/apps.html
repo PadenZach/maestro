@@ -8,7 +8,7 @@
 {{else}}
 <div class="card-grid">
   {{range $d.Apps}}
-  <a class="app-card" href="/apps/{{.Name}}/workflows">
+  <a class="app-card" href="{{.ApplicationURL}}">
     <div class="app-card-head">
       <span class="app-name">{{.Name}}</span>
       <span class="badge {{if .Available}}ok{{else}}muted{{end}}">{{if .Available}}Available{{else}}Offline{{end}}</span>

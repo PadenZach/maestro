@@ -1,0 +1,31 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1 class="page-title">{{$d.App}}</h1>
+  <span class="subtle">Application</span>
+</div>
+
+{{if $d.Available}}
+<div class="status-row">
+  <span class="badge ok">Available</span>
+  <span class="subtle">{{len $d.Executors}} connected executor{{if ne (len $d.Executors) 1}}s{{end}}</span>
+</div>
+{{else}}
+<div class="empty">No connected executors for this application. Workflows and queues remain available as navigation, but their data requires a connected executor.</div>
+{{end}}
+
+<div class="card-grid">
+  <a class="app-card application-workflows-link" href="{{$d.WorkflowsURL}}">
+    <div class="app-card-head">
+      <span class="app-name">Workflows</span>
+    </div>
+    <div class="app-card-meta">Browse workflow runs and details.</div>
+  </a>
+  <a class="app-card application-queues-link" href="{{$d.QueuesURL}}">
+    <div class="app-card-head">
+      <span class="app-name">Queues</span>
+    </div>
+    <div class="app-card-meta">Browse registered queues and queued workflows.</div>
+  </a>
+</div>
+{{end}}
