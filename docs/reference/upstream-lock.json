@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-09-25",
+  "verification_level": "source-reviewed; selected Python 2.24.0/2.31.1/3.1.0 real-SDK SQLite boundary passed locally; full SDK feature breadth unverified",
+  "python": {
+    "repository": "https://github.com/dbos-inc/dbos-transact-py",
+    "baseline": {"tag": "2.24.0", "commit": "186987aa339c5b2bdd0f73e12951ecebec228730"},
+    "transitional": {"tag": "2.31.1", "commit": "4dea06237efc02585ffdc9955dd7b4b78617d82b"},
+    "current": {
+      "tag": "3.1.0",
+      "commit": "84715a3633316a3d62479516fb8d432245f5a172",
+      "released_on": "2026-09-24",
+      "files": {
+        "dbos/_conductor/protocol.py": "96acef8072c6ebe87ad3e8d7ecb7f8f7b1aa423af74881b98b4c2a6cabc9eadb",
+        "dbos/_conductor/conductor.py": "befc49927f7845977e46e2fc45b386ceb2f189821a4930b3e93ea02dd5e44c78"
+      }
+    },
+    "main_observed": "c179fe2f05e074400a21e595634b6cf5c94122a8",
+    "main_protocol_and_dispatcher_match_current": true
+  },
+  "typescript": {
+    "repository": "https://github.com/dbos-inc/dbos-transact-ts",
+    "tag": "v5.1",
+    "commit": "ba893ec9964d88b72881e9738b31d40654c8adfb",
+    "protocol_path": "src/conductor/protocol.ts",
+    "review_scope": "protocol definitions only"
+  },
+  "go": {
+    "repository": "https://github.com/dbos-inc/dbos-transact-golang",
+    "tag": "v1.4.0",
+    "commit": "5387dd34db00b1762a2367ab4bf1de935afa09f7",
+    "protocol_path": "dbos/conductor_protocol.go",
+    "review_scope": "protocol definitions only"
+  },
+  "java": {
+    "repository": "https://github.com/dbos-inc/dbos-transact-java",
+    "tag": "1.1.0",
+    "commit": "fb2b904ae9dfbb5ce723c4348f454fd1f1682035",
+    "protocol_path": "transact/src/main/java/dev/dbos/transact/conductor/protocol/MessageType.java",
+    "review_scope": "message enum only"
+  },
+  "dbosctl": {
+    "repository": "https://github.com/dbos-inc/dbos-ctl",
+    "release": {
+      "tag": "v0.10.1",
+      "commit": "17879522360ced42ea9a2a7778e0a2d0973d7901",
+      "released_on": "2026-08-27",
+      "openapi_sha256": "8d66567e47a1cc34f0928e5dbe2e2a77986235e8cffc0942c94537f5a5346a39",
+      "path_count": 52,
+      "operation_count": 63
+    },
+    "main_observed": {
+      "commit": "85b483515f8d9c55f804b404bfcfba4d0a51ef6c",
+      "openapi_sha256": "984528a42430cdef9adab9bf3ea13aee8ab9df1a53e22fff21cf3ea22364b62a",
+      "path_count": 53,
+      "operation_count": 65
+    },
+    "openapi_path": "internal/api/openapi-3.1.json",
+    "license": "MIT",
+    "review_scope": "released command handlers and schema; main client and integration harness; pinned v0.10.1 fake-peer and selected real Python read-only CLI-to-maestro matrix passed locally; broad CLI parity unverified"
+  },
+  "docs": {
+    "repository": "https://github.com/dbos-inc/dbos-docs",
+    "commit": "edaf6368b2c08eb356f0bb95e26d5104544d93f3"
+  },
+  "http_openapi": {
+    "url": "https://cloud.dbos.dev/conductor/v2/openapi.json",
+    "snapshot": "docs/reference/conductor-openapi-2026-09-25.json",
+    "sha256": "a75fbdaac75a746c239382c8dffd1eb10b300912dfec8d6a60d86ac56c49b053",
+    "openapi_version": "3.1.0",
+    "api_version": "2.0.0",
+    "path_count": 53,
+    "operation_count": 65,
+    "deployment_snapshot_not_release_pin": true
+  }
+}
