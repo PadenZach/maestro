@@ -1,0 +1,49 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1 class="page-title">{{$d.App}}</h1>
+  <span class="subtle">Schedules</span>
+</div>
+
+<div class="filter-bar">
+  <form method="get" action="{{$d.SchedulesURL}}">
+    <input type="text" name="status" value="{{$d.Filter.Status}}" placeholder="All statuses">
+    <input type="text" name="workflowName" value="{{$d.Filter.WorkflowName}}" placeholder="All workflow names">
+    <input type="search" name="scheduleNamePrefix" value="{{$d.Filter.ScheduleNamePrefix}}" placeholder="All schedule name prefixes">
+    <button class="btn" type="submit">Filter</button>
+  </form>
+</div>
+
+{{if not $d.Schedules}}
+  <div class="empty">No schedules match these filters.</div>
+{{else}}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Schedule</th>
+      <th>Workflow</th>
+      <th>Cron expression</th>
+      <th>Status</th>
+      <th>Last fired</th>
+      <th>Automatic backfill</th>
+      <th>Timezone</th>
+      <th>Queue</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range $d.Schedules}}
+    <tr>
+      <td class="mono"><a class="link schedule-detail-link" href="{{$d.ScheduleDetailURL .ScheduleName}}">{{.ScheduleName}}</a></td>
+      <td class="mono">{{.WorkflowName}}</td>
+      <td class="mono">{{.Schedule}}</td>
+      <td>{{.Status}}</td>
+      <td>{{if .LastFiredAt}}{{.LastFiredAt}}{{else}}Unavailable{{end}}</td>
+      <td>{{if .AutomaticBackfill}}Yes{{else}}No{{end}}</td>
+      <td>{{if .CronTimezone}}{{.CronTimezone}}{{else}}Unavailable{{end}}</td>
+      <td class="mono">{{if .QueueName}}{{.QueueName}}{{else}}Unavailable{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+{{end}}

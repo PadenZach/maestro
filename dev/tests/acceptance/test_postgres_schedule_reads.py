@@ -48,7 +48,9 @@ def sdk_digest(wire):
 
 
 class PostgresScheduleReadValidationTests(unittest.TestCase):
-    def test_accepts_exact_schema_and_sdk_values_including_nullable_false_and_date(self):
+    def test_accepts_exact_schema_and_sdk_values_including_nullable_false_and_date(
+        self,
+    ):
         postgres_gate.validate_official_schedule(
             dict(HTTP_SCHEDULE), sdk_digest(SDK_SCHEDULE_WIRE)
         )
@@ -93,9 +95,7 @@ class PostgresScheduleReadValidationTests(unittest.TestCase):
             AssertionError,
             "Official schedule field values differ from SDK ScheduleOutput",
         ):
-            postgres_gate.validate_official_schedule(
-                dict(HTTP_SCHEDULE), "0" * 64
-            )
+            postgres_gate.validate_official_schedule(dict(HTTP_SCHEDULE), "0" * 64)
 
 
 if __name__ == "__main__":

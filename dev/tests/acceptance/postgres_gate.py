@@ -356,11 +356,15 @@ def _pinned_schedule_schema():
 
 
 def _is_rfc3339(value):
-    if not isinstance(value, str) or re.fullmatch(
-        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-        r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})",
-        value,
-    ) is None:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+            r"(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})",
+            value,
+        )
+        is None
+    ):
         return False
     try:
         parsed = datetime.datetime.fromisoformat(
@@ -732,9 +736,7 @@ def run_case(
                 )
             ), "SDK schedule digest manifest"
             official_schedule_root = (
-                "/v2/orgs/local/apps/"
-                + urllib.parse.quote(app, safe="")
-                + "/schedules"
+                "/v2/orgs/local/apps/" + urllib.parse.quote(app, safe="") + "/schedules"
             )
             status, content_type, official_schedules = request_json_response(
                 base, official_schedule_root
@@ -757,9 +759,7 @@ def run_case(
                     official_schedules_by_name[name], digests[digest_label]
                 )
 
-            schedule_with_context = official_schedules_by_name[
-                "gate-schedule-context"
-            ]
+            schedule_with_context = official_schedules_by_name["gate-schedule-context"]
             schedule_with_null = official_schedules_by_name["gate-schedule-null"]
             assert (
                 schedule_with_context["automaticBackfill"] is False
@@ -822,9 +822,7 @@ def run_case(
                 status == 200
                 and content_type == "application/json"
                 and isinstance(filtered_schedules, list)
-                and {
-                    row.get("scheduleName") for row in filtered_schedules
-                }
+                and {row.get("scheduleName") for row in filtered_schedules}
                 == schedule_names
             ), "official schedule filters"
             for schedule in filtered_schedules:
@@ -833,9 +831,7 @@ def run_case(
                 )
                 validate_official_schedule(
                     schedule,
-                    schedule_digests[schedule["scheduleName"]][
-                        "without_context"
-                    ],
+                    schedule_digests[schedule["scheduleName"]]["without_context"],
                 )
 
             empty_query = urllib.parse.urlencode(
@@ -878,7 +874,8 @@ def run_case(
                     label,
                 )
             status, content_type, problem = request_json_response(
-                base, official_schedule_root + "/gate-schedule-context?loadContext=false"
+                base,
+                official_schedule_root + "/gate-schedule-context?loadContext=false",
             )
             validate_problem_response(
                 status,

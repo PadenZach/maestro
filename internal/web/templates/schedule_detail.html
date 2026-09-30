@@ -1,0 +1,29 @@
+{{define "content"}}
+{{$s := .Data.Schedule}}
+<div class="detail-head">
+  <div>
+    <h1 class="page-title">{{$s.ScheduleName}}</h1>
+    <div class="detail-sub subtle">Schedule</div>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Configuration</h2>
+  <table class="data-table">
+    <tbody>
+      <tr><th>Schedule ID</th><td class="mono" data-field="scheduleId">{{$s.ScheduleID}}</td></tr>
+      <tr><th>Schedule name</th><td class="mono" data-field="scheduleName">{{$s.ScheduleName}}</td></tr>
+      <tr><th>Workflow name</th><td class="mono" data-field="workflowName">{{$s.WorkflowName}}</td></tr>
+      <tr><th>Workflow class</th><td class="mono" data-field="workflowClass">{{if $s.WorkflowClassName}}{{$s.WorkflowClassName}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Cron expression</th><td class="mono" data-field="cronExpression">{{$s.Schedule}}</td></tr>
+      <tr><th>Status</th><td data-field="status">{{$s.Status}}</td></tr>
+      <tr><th>Context (opaque SDK text)</th><td class="mono" data-field="context">{{if $s.Context}}{{$s.Context}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Last fired at</th><td data-field="lastFiredAt">{{if $s.LastFiredAt}}{{$s.LastFiredAt}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Automatic backfill</th><td data-field="automaticBackfill">{{if $s.AutomaticBackfill}}Yes{{else}}No{{end}}</td></tr>
+      <tr><th>Cron timezone</th><td data-field="cronTimezone">{{if $s.CronTimezone}}{{$s.CronTimezone}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Application name</th><td class="mono" data-field="applicationName">{{if $s.ApplicationName}}{{$s.ApplicationName}}{{else}}Unavailable{{end}}</td></tr>
+      <tr><th>Queue name (SDK field)</th><td class="mono" data-field="queueName">{{if $s.QueueName}}{{$s.QueueName}}{{else}}Unavailable{{end}}</td></tr>
+    </tbody>
+  </table>
+</section>
+{{end}}

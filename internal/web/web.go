@@ -33,6 +33,8 @@ var pageFiles = map[string]string{
 	"workflow_detail": "templates/workflow_detail.html",
 	"queues":          "templates/queues.html",
 	"queue_detail":    "templates/queue_detail.html",
+	"schedules":       "templates/schedules.html",
+	"schedule_detail": "templates/schedule_detail.html",
 	"error":           "templates/error.html",
 }
 

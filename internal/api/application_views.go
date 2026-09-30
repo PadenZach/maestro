@@ -21,6 +21,10 @@ func (d applicationData) QueuesURL() string {
 	return applicationPath(d.App) + "/queues"
 }
 
+func (d applicationData) SchedulesURL() string {
+	return applicationPath(d.App) + "/schedules"
+}
+
 func (a appSummary) ApplicationURL() string {
 	return applicationPath(a.Name)
 }
