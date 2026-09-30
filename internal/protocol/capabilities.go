@@ -13,6 +13,7 @@ type Feature string
 
 const (
 	FeatureWorkflowFilters    Feature = "recent workflow filters"
+	FeatureRelatedReads       Feature = "workflow related reads"
 	FeatureQueueAppFilter     Feature = "queue application filter"
 	FeatureRestart            Feature = "legacy restart"
 	FeatureRewind             Feature = "rewind"
@@ -39,6 +40,8 @@ func SupportsFeature(language, sdkVersion string, feature Feature) bool {
 		return false
 	}
 	switch feature {
+	case FeatureRelatedReads:
+		return major == 2 && minor == 24 && patch == 0 || major == 2 && minor == 31 && patch == 1 || major == 3 && minor == 1 && patch == 0
 	case FeatureWorkflowFilters, FeatureQueueAppFilter:
 		return major == 2 && minor == 31 && patch == 1 || major == 3 && minor == 1 && patch == 0
 	case FeatureRestart:
@@ -68,6 +71,8 @@ func RequiredFeatures(req Request) ([]Feature, error) {
 		return nil, fmt.Errorf("invalid request type")
 	}
 	switch MessageType(typ) {
+	case MsgGetWorkflowEvents, MsgGetWorkflowNotifications, MsgGetWorkflowStreams:
+		return []Feature{FeatureRelatedReads}, nil
 	case MsgRestart:
 		return []Feature{FeatureRestart}, nil
 	case MsgRewindWorkflow:

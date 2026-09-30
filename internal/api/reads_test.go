@@ -34,7 +34,25 @@ func dialFake(t *testing.T, ts *httptest.Server, app, key, execID string, handle
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	answerExecutorInfo(t, ctx, c, execID, "v1")
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read executor_info request: %v", err)
+	}
+	envelope, err := protocol.DecodeEnvelope(data)
+	if err != nil || envelope.Type != protocol.MsgExecutorInfo {
+		t.Fatalf("executor_info request: envelope=%+v err=%v", envelope, err)
+	}
+	language, sdkVersion := "python", "3.1.0"
+	response, err := json.Marshal(protocol.ExecutorInfoResponse{
+		Type: protocol.MsgExecutorInfo, RequestID: envelope.RequestID, ExecutorID: execID,
+		ApplicationVersion: "v1", Language: &language, DBOSVersion: &sdkVersion,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Write(ctx, websocket.MessageText, response); err != nil {
+		t.Fatalf("write executor_info response: %v", err)
+	}
 	fe := &fakeExec{c: c, captured: map[string]map[string]any{}}
 	done := make(chan struct{})
 	go func() { defer close(done); fe.loop(handlers) }()

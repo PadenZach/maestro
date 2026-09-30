@@ -72,6 +72,9 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/search", s.localV2Search)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}", s.localV2Get)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/steps", s.localV2Steps)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/events", s.localV2Events)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/notifications", s.localV2Notifications)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/streams", s.localV2Streams)
 	}
 
 	// JSON API (mirror of the reads, for tests/SDKs).

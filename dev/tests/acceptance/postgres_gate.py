@@ -409,6 +409,96 @@ def validate_official_schedule(schedule, expected_sdk_digest):
     )
 
 
+def _pinned_related_schema(schema_name):
+    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
+    return json.loads(snapshot.read_text())["components"]["schemas"][schema_name]
+
+
+def _validate_official_related(record, schema_name):
+    schema = _pinned_related_schema(schema_name)
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(record, dict), (
+        f"Official {schema_name} response must be an object"
+    )
+    assert required <= set(record) <= set(properties), (
+        f"Official {schema_name} fields differ from pinned schema"
+    )
+    for field, value in record.items():
+        property_schema = properties[field]
+        allowed = property_schema["type"]
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        if "array" in allowed:
+            valid = isinstance(value, list)
+            if valid:
+                item_type = property_schema["items"]["type"]
+                valid = all(
+                    _matches_json_type(item, [item_type]) for item in value
+                )
+        else:
+            valid = _matches_json_type(value, allowed)
+        assert valid, (
+            f"Official {schema_name}.{field} violates pinned schema"
+        )
+        if property_schema.get("format") == "date-time" and value is not None:
+            assert _is_rfc3339(value), (
+                f"Official {schema_name}.{field} violates pinned schema"
+            )
+
+
+def _sdk_wire_digest(wire):
+    encoded = json.dumps(
+        wire, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_official_event(event, expected_sdk_digest):
+    _validate_official_related(event, "Event")
+    assert _sdk_wire_digest(event) == expected_sdk_digest, (
+        "Official event field values differ from SDK EventOutput"
+    )
+
+
+def _notification_created_at_epoch_ms(created_at):
+    parsed = datetime.datetime.fromisoformat(
+        created_at[:-1] + "+00:00" if created_at.endswith("Z") else created_at
+    )
+    utc = parsed.astimezone(datetime.timezone.utc)
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    delta = utc - epoch
+    assert delta.microseconds % 1000 == 0, (
+        "Official notification field values differ from SDK NotificationOutput"
+    )
+    return (
+        (delta.days * 24 * 60 * 60 + delta.seconds) * 1000
+        + delta.microseconds // 1000
+    )
+
+
+def validate_official_notification(notification, expected_sdk_digest):
+    _validate_official_related(notification, "Notification")
+    wire = {
+        "topic": notification["topic"],
+        "message": notification["message"],
+        "created_at_epoch_ms": _notification_created_at_epoch_ms(
+            notification["createdAt"]
+        ),
+        "consumed": notification["consumed"],
+    }
+    assert _sdk_wire_digest(wire) == expected_sdk_digest, (
+        "Official notification field values differ from SDK NotificationOutput"
+    )
+
+
+def validate_official_stream(stream, expected_sdk_digest):
+    _validate_official_related(stream, "StreamEntry")
+    assert _sdk_wire_digest(stream) == expected_sdk_digest, (
+        "Official stream field values differ from SDK StreamEntryOutput"
+    )
+
+
 def validate_problem_response(status, content_type, problem, expected_status, label):
     assert status == expected_status, f"{label} status"
     assert content_type == "application/problem+json", f"{label} content type"
@@ -506,6 +596,7 @@ def run_case(
     bad_digest,
     bad_queue_field,
     bad_schedule_field,
+    bad_related_field,
     environment,
 ):
     temp.mkdir(mode=0o700)
@@ -535,6 +626,9 @@ def run_case(
         "gate-input-value",
         "gate-step-value",
         "gate-event-value",
+        "stream-first",
+        "notification-null-topic",
+        "empty-topic",
         "schedule-context-value",
     )
     with (
@@ -597,6 +691,8 @@ def run_case(
 
             ready = wait_for(app_ready, deadline, "SDK workflow on Postgres")
             workflow_id = ready["workflow_id"]
+            empty_related_workflow_id = ready["empty_related_workflow_id"]
+            notification_workflow_id = ready["notification_workflow_id"]
 
             def connected():
                 status, peers = request_json(base, "/api/executors")
@@ -885,6 +981,182 @@ def run_case(
                 "official schedule get unsupported query",
             )
 
+            event_digests = ready["event_sha256"]
+            notification_digests = ready["notification_sha256"]
+            stream_digests = ready["stream_sha256"]
+            assert (
+                isinstance(event_digests, dict)
+                and set(event_digests) == {"gate-event"}
+            ), "SDK event digest manifest"
+            assert (
+                isinstance(notification_digests, dict)
+                and set(notification_digests) == {"null-topic", "empty-topic"}
+            ), "SDK notification digest manifest"
+            assert (
+                isinstance(stream_digests, dict)
+                and set(stream_digests)
+                == {"gate-stream", "gate-empty-stream"}
+            ), "SDK stream digest manifest"
+
+            official_workflow_root = (
+                "/v2/orgs/local/apps/"
+                + urllib.parse.quote(app, safe="")
+                + "/workflows/"
+            )
+            official_related_paths = {
+                "events": (
+                    official_workflow_root
+                    + urllib.parse.quote(workflow_id, safe="")
+                    + "/events"
+                ),
+                "notifications": (
+                    official_workflow_root
+                    + urllib.parse.quote(notification_workflow_id, safe="")
+                    + "/notifications"
+                ),
+                "streams": (
+                    official_workflow_root
+                    + urllib.parse.quote(workflow_id, safe="")
+                    + "/streams"
+                ),
+            }
+
+            if metadata_only:
+                for related_name, related_path in official_related_paths.items():
+                    related_status, content_type, problem = request_json_response(
+                        base, related_path
+                    )
+                    validate_problem_response(
+                        related_status,
+                        content_type,
+                        problem,
+                        502,
+                        f"official metadata-only {related_name} refusal",
+                    )
+                    assert "metadata-only mode" in problem["detail"], (
+                        f"official metadata-only {related_name} refusal detail"
+                    )
+            else:
+                related_status, content_type, official_events = (
+                    request_json_response(base, official_related_paths["events"])
+                )
+                assert (
+                    related_status == 200
+                    and content_type == "application/json"
+                    and isinstance(official_events, list)
+                    and len(official_events) == 1
+                ), "official event response"
+                assert {event.get("key") for event in official_events} == set(
+                    event_digests
+                ), "official event keys"
+                for event in official_events:
+                    validate_official_event(event, event_digests[event["key"]])
+
+                related_status, content_type, official_notifications = (
+                    request_json_response(
+                        base, official_related_paths["notifications"]
+                    )
+                )
+                assert (
+                    related_status == 200
+                    and content_type == "application/json"
+                    and isinstance(official_notifications, list)
+                    and len(official_notifications) == 2
+                    and all(
+                        isinstance(notification, dict)
+                        for notification in official_notifications
+                    )
+                ), "official notification response"
+                seen_notification_labels = set()
+                for notification in official_notifications:
+                    if notification.get("topic") is None:
+                        label = "null-topic"
+                    else:
+                        assert notification.get("topic") == "", (
+                            "official notification empty topic"
+                        )
+                        label = "empty-topic"
+                    seen_notification_labels.add(label)
+                    assert notification.get("consumed") is False, (
+                        "official pending notification consumed flag"
+                    )
+                    validate_official_notification(
+                        notification, notification_digests[label]
+                    )
+                assert seen_notification_labels == set(notification_digests), (
+                    "official nullable/empty notification topics"
+                )
+
+                related_status, content_type, official_streams = (
+                    request_json_response(base, official_related_paths["streams"])
+                )
+                assert (
+                    related_status == 200
+                    and content_type == "application/json"
+                    and isinstance(official_streams, list)
+                    and len(official_streams) == 2
+                    and all(isinstance(stream, dict) for stream in official_streams)
+                ), "official stream response"
+                assert {stream.get("key") for stream in official_streams} == set(
+                    stream_digests
+                ), "official stream keys"
+                for stream in official_streams:
+                    if stream["key"] == "gate-stream":
+                        assert len(stream.get("values", [])) == 3, (
+                            "official ordered stream values"
+                        )
+                    else:
+                        assert stream.get("values") == [], (
+                            "official empty stream values"
+                        )
+                    checked_stream = stream
+                    if bad_related_field and stream["key"] == "gate-stream":
+                        checked_stream = dict(stream)
+                        checked_stream["values"] = list(stream["values"])
+                        checked_stream["values"][1] = "corrupted-related-field"
+                    validate_official_stream(
+                        checked_stream, stream_digests[stream["key"]]
+                    )
+
+                empty_related_root = (
+                    official_workflow_root
+                    + urllib.parse.quote(empty_related_workflow_id, safe="")
+                )
+                for related_name in ("events", "notifications", "streams"):
+                    related_status, content_type, empty_related = (
+                        request_json_response(
+                            base, empty_related_root + "/" + related_name
+                        )
+                    )
+                    assert (
+                        related_status == 200
+                        and content_type == "application/json"
+                        and empty_related == []
+                    ), f"official existing empty {related_name}"
+
+            missing_related_root = official_workflow_root + "missing-workflow"
+            for related_name in ("events", "notifications", "streams"):
+                related_status, content_type, problem = request_json_response(
+                    base, missing_related_root + "/" + related_name
+                )
+                validate_problem_response(
+                    related_status,
+                    content_type,
+                    problem,
+                    404,
+                    f"official missing workflow {related_name}",
+                )
+                related_status, content_type, problem = request_json_response(
+                    base, official_related_paths[related_name] + "?limit=0"
+                )
+                validate_problem_response(
+                    related_status,
+                    content_type,
+                    problem,
+                    400,
+                    f"official {related_name} unsupported query",
+                )
+
             status, events = request_json(base, workflow_path + "/events")
             if metadata_only:
                 assert official_gate_queue["applicationName"] == app, (
@@ -973,7 +1245,13 @@ def run_case(
             )
 
 
-def worker(temp, bad_digest, bad_queue_field, bad_schedule_field):
+def worker(
+    temp,
+    bad_digest,
+    bad_queue_field,
+    bad_schedule_field,
+    bad_related_field,
+):
     pg_bin, python = required_tool_paths(os.environ)
     environment = sanitized_environment(os.environ, temp)
     validate_postgres_bin(pg_bin, environment)
@@ -1052,6 +1330,7 @@ def worker(temp, bad_digest, bad_queue_field, bad_schedule_field):
                     bad_digest and not metadata_only,
                     bad_queue_field and not metadata_only,
                     bad_schedule_field and not metadata_only,
+                    bad_related_field and not metadata_only,
                     environment,
                 )
         except BaseException as exc:
@@ -1069,8 +1348,8 @@ def worker(temp, bad_digest, bad_queue_field, bad_schedule_field):
             )
     print(
         "PASS PostgreSQL 18 + dbos==3.1.0 "
-        "workflows/get/steps/official-queues/official-schedules/events/"
-        "opaque-digests/metadata-refusal"
+        "workflows/get/steps/official-queues/official-schedules/"
+        "official-events/notifications/streams/opaque-digests/metadata-refusal"
     )
 
 
@@ -1095,6 +1374,11 @@ def main():
         action="store_true",
         help="negative-control: corrupt one actual official schedule field",
     )
+    parser.add_argument(
+        "--probe-bad-related-field",
+        action="store_true",
+        help="negative-control: corrupt one actual official stream field",
+    )
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -1106,6 +1390,7 @@ def main():
             args.probe_bad_expected_digest,
             args.probe_bad_queue_field,
             args.probe_bad_schedule_field,
+            args.probe_bad_related_field,
         )
         return
 
@@ -1136,6 +1421,8 @@ def main():
             command.append("--probe-bad-queue-field")
         if args.probe_bad_schedule_field:
             command.append("--probe-bad-schedule-field")
+        if args.probe_bad_related_field:
+            command.append("--probe-bad-related-field")
         run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
 
 

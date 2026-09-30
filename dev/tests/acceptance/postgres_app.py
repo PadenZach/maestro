@@ -15,8 +15,10 @@ from pathlib import Path
 from dbos import DBOS
 from dbos._conductor.protocol import (
     EventOutput,
+    NotificationOutput,
     QueueOutput,
     ScheduleOutput,
+    StreamEntryOutput,
     WorkflowsOutput,
     WorkflowSteps,
 )
@@ -44,12 +46,33 @@ def gate_step(value: str) -> str:
 @DBOS.workflow()
 def gate_workflow(value: str) -> str:
     DBOS.set_event("gate-event", "gate-event-value")
+    for stream_value in ("stream-first", {"stream": 2}, ["stream", 3]):
+        DBOS.write_stream("gate-stream", stream_value)
+    DBOS.close_stream("gate-stream")
+    DBOS.close_stream("gate-empty-stream")
     return gate_step(value)
+
+
+@DBOS.workflow()
+def gate_empty_related_workflow() -> str:
+    return "empty-related"
+
+
+@DBOS.workflow()
+def gate_notification_target() -> str:
+    return "notification-target"
 
 
 @DBOS.workflow()
 def gate_scheduled(when, context) -> str:
     return "scheduled"
+
+
+def wire_digest(value) -> str:
+    encoded = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 try:
@@ -88,6 +111,24 @@ try:
     )
     handle = DBOS.start_workflow(gate_workflow, "gate-input-value")
     assert handle.get_result() == "gate-step-value"
+    empty_related_handle = DBOS.start_workflow(gate_empty_related_workflow)
+    assert empty_related_handle.get_result() == "empty-related"
+
+    # The zero-limit SDK queue is a deterministic barrier: its target remains
+    # enqueued while public DBOS.send operations create pending (unconsumed)
+    # notifications, with no timing sleep or direct database write.
+    notification_handle = edge_queue.enqueue(gate_notification_target)
+    DBOS.send(notification_handle.workflow_id, "notification-null-topic", topic=None)
+    DBOS.send(notification_handle.workflow_id, {"notification": "empty-topic"}, topic="")
+    pending_notifications = dbos._sys_db.get_all_notifications(
+        notification_handle.workflow_id
+    )
+    assert len(pending_notifications) == 2
+    assert {notification["topic"] for notification in pending_notifications} == {
+        None,
+        "",
+    }
+    assert all(not notification["consumed"] for notification in pending_notifications)
 
     workflow_info = get_workflow(dbos._sys_db, handle.workflow_id)
     assert workflow_info is not None
@@ -104,6 +145,24 @@ try:
 
     event_values = dbos._sys_db.get_all_events(handle.workflow_id)
     event_wire = EventOutput.from_event_data("gate-event", event_values["gate-event"])
+    event_sha256 = {"gate-event": wire_digest(asdict(event_wire))}
+
+    notification_sha256 = {}
+    for notification in dbos._sys_db.get_all_notifications(
+        notification_handle.workflow_id
+    ):
+        notification_wire = NotificationOutput.from_notification_info(notification)
+        label = "null-topic" if notification_wire.topic is None else "empty-topic"
+        notification_sha256[label] = wire_digest(asdict(notification_wire))
+    assert set(notification_sha256) == {"null-topic", "empty-topic"}
+
+    stream_sha256 = {}
+    for stream_key, stream_values in dbos._sys_db.get_all_stream_entries(
+        handle.workflow_id
+    ).items():
+        stream_wire = StreamEntryOutput.from_stream_data(stream_key, stream_values)
+        stream_sha256[stream_key] = wire_digest(asdict(stream_wire))
+    assert set(stream_sha256) == {"gate-stream", "gate-empty-stream"}
 
     queue_sha256 = {}
     for queue in (gate_queue, edge_queue):
@@ -142,10 +201,15 @@ try:
     # temporary SDK-to-gate channel. No payload or credential is published.
     ready = {
         "workflow_id": handle.workflow_id,
+        "empty_related_workflow_id": empty_related_handle.workflow_id,
+        "notification_workflow_id": notification_handle.workflow_id,
         "input_sha256": hashlib.sha256(workflow_wire.Input.encode()).hexdigest(),
         "output_sha256": hashlib.sha256(workflow_wire.Output.encode()).hexdigest(),
         "step_output_sha256": hashlib.sha256(step_wire.output.encode()).hexdigest(),
         "event_value_sha256": hashlib.sha256(event_wire.value.encode()).hexdigest(),
+        "event_sha256": event_sha256,
+        "notification_sha256": notification_sha256,
+        "stream_sha256": stream_sha256,
         "queue_sha256": queue_sha256,
         "schedule_sha256": schedule_sha256,
     }
