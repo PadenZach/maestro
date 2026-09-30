@@ -139,11 +139,18 @@ func TestExecutorOriginPolicy(t *testing.T) {
 	}
 }
 
-func TestBadKeyRejected(t *testing.T) {
-	ts, _ := newTestServer(t)
+func TestExecutorKeyIsIgnored(t *testing.T) {
+	ts, h := newTestServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if _, _, err := websocket.Dial(ctx, wsURL(ts, "/websocket/app/wrongkey"), nil); err == nil {
-		t.Fatal("expected dial to fail with an invalid conductor key")
+	c, _, err := websocket.Dial(ctx, wsURL(ts, "/websocket/app/arbitrary-placeholder"), nil)
+	if err != nil {
+		t.Fatalf("gateway-authenticated executor rejected because of URL key: %v", err)
+	}
+	defer c.CloseNow()
+	answerExecutorInfo(t, ctx, c, "gateway-executor", "v1")
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	if got := h.Executors()[0]; got.ExecutorID != "gateway-executor" || got.App != "app" {
+		t.Fatalf("unexpected executor: %+v", got)
 	}
 }

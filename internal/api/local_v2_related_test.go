@@ -366,7 +366,7 @@ func TestLocalHTTPV2RelatedDistinguishesMissingWorkflow(t *testing.T) {
 	}
 }
 
-func TestLocalHTTPV2RelatedRequestValidationAndCapability(t *testing.T) {
+func TestLocalHTTPV2RelatedRequestValidation(t *testing.T) {
 	ts, h := localV2Server(t, true)
 	var calls atomic.Int32
 	fe := dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
@@ -445,33 +445,12 @@ func TestLocalHTTPV2RelatedRequestValidationAndCapability(t *testing.T) {
 	})
 	waitFor(t, func() bool { return len(unsupportedHub.Executors()) == 1 })
 	code, contentType, body := localV2Request(t, unsupported.URL+localV2RelatedWorkflowRoot+"/wf-1/events", "GET", "")
-	if code != 502 || !strings.HasPrefix(contentType, "application/problem+json") || unsupportedCalls.Load() != 0 {
-		t.Fatalf("unknown SDK: status=%d calls=%d body=%s", code, unsupportedCalls.Load(), body)
+	if code != 200 || !strings.HasPrefix(contentType, "application/json") || unsupportedCalls.Load() != 2 || strings.TrimSpace(body) != "[]" {
+		t.Fatalf("unrecognized SDK should be attempted: status=%d calls=%d body=%s", code, unsupportedCalls.Load(), body)
 	}
 }
 
-func TestLocalHTTPV2RelatedReviewedVersions(t *testing.T) {
-	for _, version := range []string{"2.24.0", "2.31.1", "3.1.0"} {
-		t.Run(version, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
-			dialScheduleFake(t, ts.URL, "one", version, map[protocol.MessageType]respondFn{
-				protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
-					return map[string]any{"output": relatedExistingWorkflow(req["workflow_id"])}
-				},
-				protocol.MsgGetWorkflowEvents: func(map[string]any) map[string]any {
-					return map[string]any{"events": []any{}}
-				},
-			})
-			waitFor(t, func() bool { return len(h.Executors()) == 1 })
-			code, _, body := localV2Request(t, ts.URL+localV2RelatedWorkflowRoot+"/wf-1/events", "GET", "")
-			if code != 200 || strings.TrimSpace(body) != "[]" {
-				t.Fatalf("reviewed SDK %s: status=%d body=%s", version, code, body)
-			}
-		})
-	}
-}
-
-func TestLocalHTTPV2RelatedCapabilityAllowsReviewedPeerAlongsidePreexistingUnknownPeer(t *testing.T) {
+func TestLocalHTTPV2RelatedReadsAllowMixedSDKVersions(t *testing.T) {
 	ts, h := localV2Server(t, true)
 	var reviewedRelatedCalls atomic.Int32
 	dialScheduleFake(t, ts.URL, "reviewed", "3.1.0", map[protocol.MessageType]respondFn{
@@ -490,7 +469,7 @@ func TestLocalHTTPV2RelatedCapabilityAllowsReviewedPeerAlongsidePreexistingUnkno
 		},
 		protocol.MsgGetWorkflowStreams: func(map[string]any) map[string]any {
 			unknownRelatedCalls.Add(1)
-			return map[string]any{"streams": []any{map[string]any{"key": "private", "values": []any{"bypassed"}}}}
+			return map[string]any{"streams": []any{}}
 		},
 	})
 	waitFor(t, func() bool { return len(h.Executors()) == 2 })
@@ -499,12 +478,12 @@ func TestLocalHTTPV2RelatedCapabilityAllowsReviewedPeerAlongsidePreexistingUnkno
 	if code != 200 || strings.TrimSpace(body) != "[]" {
 		t.Fatalf("mixed peer request: status=%d body=%s", code, body)
 	}
-	if reviewedRelatedCalls.Load() != 1 || unknownRelatedCalls.Load() != 0 {
+	if reviewedRelatedCalls.Load()+unknownRelatedCalls.Load() != 1 {
 		t.Fatalf("related calls: reviewed=%d unknown=%d", reviewedRelatedCalls.Load(), unknownRelatedCalls.Load())
 	}
 }
 
-func TestLocalHTTPV2RelatedCapabilityGatesPeersJoiningDuringExistenceRead(t *testing.T) {
+func TestLocalHTTPV2RelatedRetryAllowsNewSDKJoiningDuringExistenceRead(t *testing.T) {
 	ts, h := localV2Server(t, true)
 	existenceStarted := make(chan struct{})
 	releaseExistence := make(chan struct{})
@@ -515,7 +494,7 @@ func TestLocalHTTPV2RelatedCapabilityGatesPeersJoiningDuringExistenceRead(t *tes
 			return map[string]any{"output": relatedExistingWorkflow(req["workflow_id"])}
 		},
 		protocol.MsgGetWorkflowStreams: func(map[string]any) map[string]any {
-			return nil // Retry must not route around this disconnect to an unknown peer.
+			return nil // A pure read may retry on the newly connected SDK.
 		},
 	})
 	waitFor(t, func() bool { return len(h.Executors()) == 1 })
@@ -545,17 +524,17 @@ func TestLocalHTTPV2RelatedCapabilityGatesPeersJoiningDuringExistenceRead(t *tes
 	dialScheduleFake(t, ts.URL, "unknown", "3.1.1", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflowStreams: func(map[string]any) map[string]any {
 			unknownCalls.Add(1)
-			return map[string]any{"streams": []any{map[string]any{"key": "private", "values": []any{"bypassed"}}}}
+			return map[string]any{"streams": []any{}}
 		},
 	})
 	waitFor(t, func() bool { return len(h.Executors()) == 2 })
 	close(releaseExistence)
 	got := <-result
-	if got.err != nil || !strings.HasPrefix(got.status, "502") || !strings.HasPrefix(got.contentType, "application/problem+json") {
+	if got.err != nil || !strings.HasPrefix(got.status, "200") || !strings.HasPrefix(got.contentType, "application/json") || strings.TrimSpace(got.body) != "[]" {
 		t.Fatalf("request result: %+v", got)
 	}
-	if unknownCalls.Load() != 0 {
-		t.Fatalf("related read reached unknown retry peer %d times", unknownCalls.Load())
+	if unknownCalls.Load() != 1 {
+		t.Fatalf("related read dispatched to new SDK %d times, want 1", unknownCalls.Load())
 	}
 }
 

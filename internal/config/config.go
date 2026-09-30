@@ -1,5 +1,4 @@
-// Package config holds the conductor server configuration. The single static
-// key authenticates executor WebSocket connections, not HTTP requests.
+// Package config holds the conductor server configuration.
 package config
 
 import (
@@ -14,9 +13,8 @@ type Config struct {
 	// check, and JSON API are all served here). Default ":8090" mirrors the
 	// port the DBOS docs use for self-hosted Conductor.
 	ListenAddr string
-	// ConductorKey is the single accepted API key for executor connections in
-	// this development server. Executors connect to /websocket/{app_name}/{conductor_key}; we accept
-	// the upgrade only when {conductor_key} matches this value.
+	// ConductorKey is ignored. Retained for compatibility with existing launchers;
+	// the gateway owns authentication for executor and HTTP connections.
 	ConductorKey string
 	// RequestTimeout bounds a single server→executor round-trip issued by the
 	// dispatcher (LIST_WORKFLOWS, GET_WORKFLOW, ...). If an executor does not
@@ -36,7 +34,7 @@ func Load() Config {
 		RequestTimeout: 30 * time.Second,
 	}
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
-	flag.StringVar(&cfg.ConductorKey, "key", cfg.ConductorKey, "accepted conductor API key (dev/static)")
+	flag.StringVar(&cfg.ConductorKey, "key", cfg.ConductorKey, "ignored compatibility option; authentication belongs to the gateway")
 	flag.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
 	flag.BoolVar(&cfg.LocalHTTPV2, "local-http-v2", false, "enable read-only local-org HTTP v2 adapter (loopback listener only)")
 	flag.Parse()

@@ -244,9 +244,7 @@ def request_json_response(base, path, *, method="GET", payload=None):
     data = None
     headers = {}
     if payload is not None:
-        data = json.dumps(
-            payload, separators=(",", ":"), allow_nan=False
-        ).encode()
+        data = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode()
         headers["Content-Type"] = "application/json"
     request = urllib.request.Request(
         base + path, data=data, headers=headers, method=method
@@ -265,6 +263,112 @@ def request_json_response(base, path, *, method="GET", payload=None):
 def request_json(base, path):
     status, _, payload = request_json_response(base, path)
     return status, payload
+
+
+WORKFLOW_HTTP_TO_WIRE = {
+    "workflowId": "WorkflowUUID",
+    "status": "Status",
+    "workflowName": "WorkflowName",
+    "workflowClass": "WorkflowClassName",
+    "workflowConfig": "WorkflowConfigName",
+    "user": "AuthenticatedUser",
+    "assumedRole": "AssumedRole",
+    "roles": "AuthenticatedRoles",
+    "input": "Input",
+    "output": "Output",
+    "error": "Error",
+    "queueName": "QueueName",
+    "appVersion": "ApplicationVersion",
+    "executorId": "ExecutorID",
+    "deduplicationId": "DeduplicationID",
+    "queuePartitionKey": "QueuePartitionKey",
+    "forkedFrom": "ForkedFrom",
+    "wasForkedFrom": "WasForkedFrom",
+    "parentWorkflowId": "ParentWorkflowID",
+    "attributes": "Attributes",
+    "scheduleName": "ScheduleName",
+    "applicationName": "ApplicationName",
+}
+WORKFLOW_HTTP_TIME_TO_WIRE = {
+    "createdAt": "CreatedAt",
+    "updatedAt": "UpdatedAt",
+    "deadline": "WorkflowDeadlineEpochMS",
+    "dequeuedAt": "DequeuedAt",
+    "delayUntil": "DelayUntilEpochMS",
+    "completedAt": "CompletedAt",
+}
+WORKFLOW_HTTP_NUMBER_TO_WIRE = {
+    "priority": "Priority",
+    "timeoutMs": "WorkflowTimeoutMS",
+}
+
+
+def _pinned_workflow_schema():
+    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
+    return json.loads(snapshot.read_text())["components"]["schemas"]["Workflow"]
+
+
+def _workflow_time_epoch_ms(value):
+    if value is None:
+        return None
+    assert _is_rfc3339(value), "Official Workflow timestamp violates pinned schema"
+    parsed = datetime.datetime.fromisoformat(
+        value[:-1] + "+00:00" if value.endswith("Z") else value
+    )
+    utc = parsed.astimezone(datetime.timezone.utc)
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    delta = utc - epoch
+    assert delta.microseconds % 1000 == 0, (
+        "Official workflow field values differ from SDK WorkflowsOutput"
+    )
+    return str(
+        (delta.days * 24 * 60 * 60 + delta.seconds) * 1000 + delta.microseconds // 1000
+    )
+
+
+def validate_official_workflow(workflow, expected_sdk_digest):
+    """Validate one official Workflow against pinned OpenAPI and SDK conversion."""
+    schema = _pinned_workflow_schema()
+    required = set(schema["required"])
+    properties = schema["properties"]
+    assert isinstance(workflow, dict), "Official Workflow response must be an object"
+    assert required <= set(workflow) <= set(properties), (
+        "Official Workflow fields differ from pinned schema"
+    )
+    for field, value in workflow.items():
+        allowed = properties[field]["type"]
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        assert _matches_json_type(value, allowed), (
+            f"Official Workflow.{field} violates pinned schema"
+        )
+        field_format = properties[field].get("format")
+        if field_format == "date-time" and value is not None:
+            assert _is_rfc3339(value), (
+                f"Official Workflow.{field} violates pinned schema"
+            )
+        if field_format == "int32" and value is not None:
+            assert -(2**31) <= value < 2**31, (
+                f"Official Workflow.{field} violates pinned schema"
+            )
+        if field_format == "int64" and value is not None:
+            assert -(2**63) <= value < 2**63, (
+                f"Official Workflow.{field} violates pinned schema"
+            )
+
+    wire = {
+        wire_field: workflow[http_field]
+        for http_field, wire_field in WORKFLOW_HTTP_TO_WIRE.items()
+    }
+    for http_field, wire_field in WORKFLOW_HTTP_TIME_TO_WIRE.items():
+        wire[wire_field] = _workflow_time_epoch_ms(workflow[http_field])
+    for http_field, wire_field in WORKFLOW_HTTP_NUMBER_TO_WIRE.items():
+        value = workflow[http_field]
+        wire[wire_field] = str(value) if value is not None else None
+    actual_digest = _sdk_wire_digest(wire)
+    assert actual_digest == expected_sdk_digest, (
+        "Official workflow field values differ from SDK WorkflowsOutput"
+    )
 
 
 QUEUE_HTTP_TO_WIRE = {
@@ -520,7 +624,9 @@ def _validate_official_aggregate(record, schema_name):
         f"Official {schema_name} fields differ from pinned schema"
     )
     group = record.get("group")
-    assert isinstance(group, dict), f"Official {schema_name}.group violates pinned schema"
+    assert isinstance(group, dict), (
+        f"Official {schema_name}.group violates pinned schema"
+    )
     assert all(
         isinstance(key, str) and (value is None or isinstance(value, str))
         for key, value in group.items()
@@ -552,13 +658,14 @@ def _aggregate_created_at_epoch_ms(created_at):
         "Official workflow aggregate field values differ from SDK WorkflowAggregateOutput"
     )
     return (
-        (delta.days * 24 * 60 * 60 + delta.seconds) * 1000
-        + delta.microseconds // 1000
-    )
+        delta.days * 24 * 60 * 60 + delta.seconds
+    ) * 1000 + delta.microseconds // 1000
 
 
 def validate_official_workflow_aggregates(aggregates, expected_sdk_digest):
-    assert isinstance(aggregates, list), "Official WorkflowAggregate response must be an array"
+    assert isinstance(aggregates, list), (
+        "Official WorkflowAggregate response must be an array"
+    )
     wire = []
     for aggregate in aggregates:
         _validate_official_aggregate(aggregate, "WorkflowAggregate")
@@ -581,7 +688,9 @@ def validate_official_workflow_aggregates(aggregates, expected_sdk_digest):
 
 
 def validate_official_step_aggregates(aggregates, expected_sdk_digest):
-    assert isinstance(aggregates, list), "Official StepAggregate response must be an array"
+    assert isinstance(aggregates, list), (
+        "Official StepAggregate response must be an array"
+    )
     wire = []
     for aggregate in aggregates:
         _validate_official_aggregate(aggregate, "StepAggregate")
@@ -710,6 +819,7 @@ def run_case(
     database_url,
     metadata_only,
     bad_digest,
+    bad_workflow_field,
     bad_queue_field,
     bad_schedule_field,
     bad_related_field,
@@ -826,6 +936,307 @@ def run_case(
             assert peer["executor_metadata"] == {"gate": "postgres18-read-smoke"}, (
                 "SDK handshake metadata"
             )
+
+            workflow_read_digests = ready["workflow_read_sha256"]
+            workflow_read_without_blobs_digests = ready[
+                "workflow_read_without_blobs_sha256"
+            ]
+            direct_workflow_digest = ready["workflow_sha256"]
+            direct_workflow_without_blobs_digest = ready[
+                "workflow_without_blobs_sha256"
+            ]
+            workflow_read_executor_id = ready["workflow_read_executor_id"]
+            assert (
+                isinstance(workflow_read_executor_id, str)
+                and workflow_read_executor_id
+                and peer["executor_id"] == workflow_read_executor_id
+            ), "SDK workflow-read executor identity"
+            assert (
+                isinstance(workflow_read_digests, dict)
+                and len(workflow_read_digests) == 2
+                and set(workflow_read_digests)
+                == set(workflow_read_without_blobs_digests)
+                and all(
+                    isinstance(digest, str) and len(digest) == 64
+                    for digest in (
+                        list(workflow_read_digests.values())
+                        + list(workflow_read_without_blobs_digests.values())
+                        + [
+                            direct_workflow_digest,
+                            direct_workflow_without_blobs_digest,
+                        ]
+                    )
+                )
+            ), "SDK workflow-read digest manifest"
+            workflow_read_ids = list(workflow_read_digests)
+            selected_workflow_read_id = workflow_read_ids[0]
+            expected_workflow_read_digests = (
+                workflow_read_without_blobs_digests
+                if metadata_only
+                else workflow_read_digests
+            )
+            official_workflows_root = (
+                "/v2/orgs/local/apps/" + urllib.parse.quote(app, safe="") + "/workflows"
+            )
+
+            get_list_query = urllib.parse.urlencode(
+                {
+                    "workflowName": "gate_workflow_read_fixture",
+                    "loadInput": "true",
+                    "loadOutput": "true",
+                }
+            )
+            workflow_status, content_type, official_workflows = request_json_response(
+                base, official_workflows_root + "?" + get_list_query
+            )
+            assert (
+                workflow_status == 200
+                and content_type == "application/json"
+                and isinstance(official_workflows, list)
+                and {row.get("workflowId") for row in official_workflows}
+                == set(workflow_read_ids)
+            ), "official workflow GET list response"
+            for workflow in official_workflows:
+                validate_official_workflow(
+                    workflow,
+                    expected_workflow_read_digests[workflow["workflowId"]],
+                )
+                assert workflow["priority"] == 7, (
+                    "official workflow genuine queued priority"
+                )
+                assert workflow["queueName"] == "gate-queue", (
+                    "official workflow genuine queue metadata"
+                )
+                assert workflow["dequeuedAt"] is not None, (
+                    "official workflow genuine dequeue metadata"
+                )
+                if metadata_only:
+                    assert workflow["input"] is None and workflow["output"] is None, (
+                        "metadata-only workflow list exposed blobs"
+                    )
+                else:
+                    assert (
+                        isinstance(workflow["input"], str)
+                        and workflow["input"]
+                        and isinstance(workflow["output"], str)
+                        and workflow["output"]
+                    ), "official workflow list omitted requested blobs"
+
+            ascending_created = [row["createdAt"] for row in official_workflows]
+            assert ascending_created == sorted(ascending_created), (
+                "official workflow GET default ascending order"
+            )
+            descending_query = urllib.parse.urlencode(
+                {
+                    "workflowName": "gate_workflow_read_fixture",
+                    "sortDesc": "true",
+                    "limit": 1,
+                    "offset": 0,
+                }
+            )
+            workflow_status, _, descending_page = request_json_response(
+                base, official_workflows_root + "?" + descending_query
+            )
+            assert (
+                workflow_status == 200
+                and len(descending_page) == 1
+                and descending_page[0]["createdAt"] == max(ascending_created)
+            ), "official workflow GET sorting and first page"
+            validate_official_workflow(
+                descending_page[0],
+                workflow_read_without_blobs_digests[descending_page[0]["workflowId"]],
+            )
+            exhausted_query = urllib.parse.urlencode(
+                {
+                    "workflowName": "gate_workflow_read_fixture",
+                    "limit": 1,
+                    "offset": 2,
+                }
+            )
+            workflow_status, _, exhausted_page = request_json_response(
+                base, official_workflows_root + "?" + exhausted_query
+            )
+            assert workflow_status == 200 and exhausted_page == [], (
+                "official workflow GET exhausted page"
+            )
+
+            workflow_search_path = official_workflows_root + "/search"
+            workflow_search_body = {
+                "workflowIds": [selected_workflow_read_id],
+                "workflowName": ["gate_workflow_read_fixture"],
+                "status": ["SUCCESS"],
+                "appVersion": ["postgres-gate-v1"],
+                "queueName": ["gate-queue"],
+                "executorId": [workflow_read_executor_id],
+                "workflowIdPrefix": [selected_workflow_read_id[:8]],
+                "attributes": {"tenant": "workflow-read"},
+                "startTime": "2000-01-01T00:00:00+00:00",
+                "endTime": "2100-01-01T00:00:00+00:00",
+                "completedAfter": "2000-01-01T00:00:00+00:00",
+                "completedBefore": "2100-01-01T00:00:00+00:00",
+                "dequeuedAfter": "2000-01-01T00:00:00+00:00",
+                "dequeuedBefore": "2100-01-01T00:00:00+00:00",
+                "hasParent": False,
+                "wasForkedFrom": False,
+                "queuesOnly": True,
+                "loadInput": True,
+                "loadOutput": True,
+                "sortDesc": True,
+                "limit": 2,
+                "offset": 0,
+            }
+            workflow_status, content_type, searched_workflows = request_json_response(
+                base,
+                workflow_search_path,
+                method="POST",
+                payload=workflow_search_body,
+            )
+            assert (
+                workflow_status == 200
+                and content_type == "application/json"
+                and isinstance(searched_workflows, list)
+                and len(searched_workflows) == 1
+                and searched_workflows[0]["workflowId"] == selected_workflow_read_id
+            ), "official expanded workflow search"
+            checked_workflow = searched_workflows[0]
+            if bad_workflow_field and not metadata_only:
+                checked_workflow = dict(checked_workflow)
+                checked_workflow["priority"] += 1
+            validate_official_workflow(
+                checked_workflow,
+                expected_workflow_read_digests[selected_workflow_read_id],
+            )
+
+            workflow_status, _, default_search = request_json_response(
+                base,
+                workflow_search_path,
+                method="POST",
+                payload={"workflowIds": [selected_workflow_read_id]},
+            )
+            assert (
+                workflow_status == 200
+                and len(default_search) == 1
+                and default_search[0]["input"] is None
+                and default_search[0]["output"] is None
+            ), "official workflow search default blob loading"
+            validate_official_workflow(
+                default_search[0],
+                workflow_read_without_blobs_digests[selected_workflow_read_id],
+            )
+
+            for field, value in (
+                ("user", ["missing-user"]),
+                ("forkedFrom", ["missing-fork"]),
+                ("parentWorkflowId", ["missing-parent"]),
+                ("scheduleName", ["missing-schedule"]),
+                ("status", ["NO_MATCHING_STATUS"]),
+                ("attributes", {"tenant": "missing-tenant"}),
+                ("hasParent", True),
+                ("wasForkedFrom", True),
+            ):
+                workflow_status, content_type, no_workflows = request_json_response(
+                    base,
+                    workflow_search_path,
+                    method="POST",
+                    payload={
+                        "workflowIds": [selected_workflow_read_id],
+                        field: value,
+                    },
+                )
+                assert (
+                    workflow_status == 200
+                    and content_type == "application/json"
+                    and no_workflows == []
+                ), f"official workflow negative {field} filter"
+
+            workflow_status, content_type, official_workflow = request_json_response(
+                base,
+                official_workflows_root
+                + "/"
+                + urllib.parse.quote(selected_workflow_read_id, safe=""),
+            )
+            assert (
+                workflow_status == 200
+                and content_type == "application/json"
+                and official_workflow["workflowId"] == selected_workflow_read_id
+            ), "official workflow get response"
+            validate_official_workflow(
+                official_workflow,
+                expected_workflow_read_digests[selected_workflow_read_id],
+            )
+
+            workflow_status, content_type, problem = request_json_response(
+                base, official_workflows_root + "/missing-workflow"
+            )
+            validate_problem_response(
+                workflow_status,
+                content_type,
+                problem,
+                404,
+                "official missing workflow get",
+            )
+            workflow_status, content_type, direct_workflow = request_json_response(
+                base,
+                official_workflows_root
+                + "/"
+                + urllib.parse.quote(workflow_id, safe=""),
+            )
+            if workflow_status == 200:
+                assert content_type == "application/json", (
+                    "official direct-workflow content type"
+                )
+                validate_official_workflow(
+                    direct_workflow,
+                    (
+                        direct_workflow_without_blobs_digest
+                        if metadata_only
+                        else direct_workflow_digest
+                    ),
+                )
+            else:
+                validate_problem_response(
+                    workflow_status,
+                    content_type,
+                    direct_workflow,
+                    502,
+                    "official direct-workflow nullability boundary",
+                )
+                assert (
+                    "priority" in direct_workflow["detail"]
+                    or "updatedAt" in direct_workflow["detail"]
+                ), "official direct-workflow nullability contradiction detail"
+            for path, method, payload, label in (
+                (
+                    official_workflows_root + "?status=SUCCESS&status=ERROR",
+                    "GET",
+                    None,
+                    "official workflow duplicate GET scalar",
+                ),
+                (
+                    official_workflows_root + "?queueName=gate-queue",
+                    "GET",
+                    None,
+                    "official workflow unsupported GET query",
+                ),
+                (
+                    workflow_search_path + "?limit=1",
+                    "POST",
+                    {},
+                    "official workflow search query",
+                ),
+                (
+                    workflow_search_path,
+                    "POST",
+                    {"applicationName": [app]},
+                    "official workflow unknown search field",
+                ),
+            ):
+                workflow_status, content_type, problem = request_json_response(
+                    base, path, method=method, payload=payload
+                )
+                validate_problem_response(
+                    workflow_status, content_type, problem, 400, label
+                )
 
             prefix = "/api/" + urllib.parse.quote(app, safe="")
             workflow_path = (
@@ -1277,8 +1688,8 @@ def run_case(
                 and len(step_aggregate_digest) == 64
             ), "SDK aggregate digest manifest"
 
-            official_app_root = (
-                "/v2/orgs/local/apps/" + urllib.parse.quote(app, safe="")
+            official_app_root = "/v2/orgs/local/apps/" + urllib.parse.quote(
+                app, safe=""
             )
             workflow_aggregate_path = official_app_root + "/workflows/aggregates"
             workflow_aggregate_body = {
@@ -1304,13 +1715,11 @@ def run_case(
                 "wasForkedFrom": False,
                 "hasParent": False,
             }
-            aggregate_status, content_type, workflow_aggregates = (
-                request_json_response(
-                    base,
-                    workflow_aggregate_path,
-                    method="POST",
-                    payload=workflow_aggregate_body,
-                )
+            aggregate_status, content_type, workflow_aggregates = request_json_response(
+                base,
+                workflow_aggregate_path,
+                method="POST",
+                payload=workflow_aggregate_body,
             )
             assert (
                 aggregate_status == 200
@@ -1351,9 +1760,7 @@ def run_case(
                 and isinstance(step_aggregates, list)
                 and len(step_aggregates) == 1
             ), "official step aggregate response"
-            validate_official_step_aggregates(
-                step_aggregates, step_aggregate_digest
-            )
+            validate_official_step_aggregates(step_aggregates, step_aggregate_digest)
 
             # The released handlers default to count only when every select flag
             # is omitted. Restrict by workflow ID so the independent fixture
@@ -1367,11 +1774,9 @@ def run_case(
                     "workflowIds": [workflow_id],
                 },
             )
-            assert (
-                aggregate_status == 200
-                and default_count
-                == [{"group": {"status": "SUCCESS"}, "count": 1}]
-            ), "released SDK workflow aggregate default count"
+            assert aggregate_status == 200 and default_count == [
+                {"group": {"status": "SUCCESS"}, "count": 1}
+            ], "released SDK workflow aggregate default count"
 
             for path, payload, label in (
                 (
@@ -1394,9 +1799,7 @@ def run_case(
                 ),
             ):
                 aggregate_status, content_type, empty_aggregates = (
-                    request_json_response(
-                        base, path, method="POST", payload=payload
-                    )
+                    request_json_response(base, path, method="POST", payload=payload)
                 )
                 assert (
                     aggregate_status == 200
@@ -1589,6 +1992,7 @@ def run_case(
 def worker(
     temp,
     bad_digest,
+    bad_workflow_field,
     bad_queue_field,
     bad_schedule_field,
     bad_related_field,
@@ -1670,6 +2074,7 @@ def worker(
                     postgres_database_url(socket_dir, pg_port, database),
                     metadata_only,
                     bad_digest and not metadata_only,
+                    bad_workflow_field and not metadata_only,
                     bad_queue_field and not metadata_only,
                     bad_schedule_field and not metadata_only,
                     bad_related_field and not metadata_only,
@@ -1691,7 +2096,7 @@ def worker(
             )
     print(
         "PASS PostgreSQL 18 + dbos==3.1.0 "
-        "workflows/get/steps/official-queues/official-schedules/"
+        "workflows/get/steps/official-workflow-list-search-get/official-queues/official-schedules/"
         "official-events/notifications/streams/workflow-aggregates/"
         "step-aggregates/opaque-export/opaque-digests/metadata-refusal"
     )
@@ -1707,6 +2112,11 @@ def main():
         "--probe-bad-expected-digest",
         action="store_true",
         help="negative-control: corrupt the expected workflow Input digest",
+    )
+    parser.add_argument(
+        "--probe-bad-workflow-field",
+        action="store_true",
+        help="negative-control: corrupt one actual official workflow field",
     )
     parser.add_argument(
         "--probe-bad-queue-field",
@@ -1737,6 +2147,7 @@ def main():
         worker(
             args.temp,
             args.probe_bad_expected_digest,
+            args.probe_bad_workflow_field,
             args.probe_bad_queue_field,
             args.probe_bad_schedule_field,
             args.probe_bad_related_field,
@@ -1767,6 +2178,8 @@ def main():
         ]
         if args.probe_bad_expected_digest:
             command.append("--probe-bad-expected-digest")
+        if args.probe_bad_workflow_field:
+            command.append("--probe-bad-workflow-field")
         if args.probe_bad_queue_field:
             command.append("--probe-bad-queue-field")
         if args.probe_bad_schedule_field:

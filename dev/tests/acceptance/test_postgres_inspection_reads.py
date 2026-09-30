@@ -64,7 +64,9 @@ class PostgresInspectionReadValidationTests(unittest.TestCase):
             sdk_digest(SDK_STEP_AGGREGATES),
         )
 
-    def test_accepts_empty_groups_zero_measures_and_omitted_nullable_wire_measures(self):
+    def test_accepts_empty_groups_zero_measures_and_omitted_nullable_wire_measures(
+        self,
+    ):
         workflow_http = [{"group": {"nullable": None}, "count": 0}]
         workflow_wire = [
             {
@@ -83,9 +85,7 @@ class PostgresInspectionReadValidationTests(unittest.TestCase):
         postgres_gate.validate_official_step_aggregates(
             step_http, sdk_digest(step_wire)
         )
-        postgres_gate.validate_official_workflow_aggregates(
-            [], sdk_digest([])
-        )
+        postgres_gate.validate_official_workflow_aggregates([], sdk_digest([]))
         postgres_gate.validate_official_step_aggregates([], sdk_digest([]))
 
     def test_rejects_missing_extraneous_and_wrong_typed_aggregate_fields(self):
@@ -155,9 +155,7 @@ class PostgresInspectionReadValidationTests(unittest.TestCase):
     def test_export_validator_preserves_exact_opaque_string(self):
         opaque = "opaque<字>\\u0000/base64=="
         digest = hashlib.sha256(opaque.encode()).hexdigest()
-        postgres_gate.validate_official_export(
-            {"serializedWorkflow": opaque}, digest
-        )
+        postgres_gate.validate_official_export({"serializedWorkflow": opaque}, digest)
         for value, message in (
             ({}, "Official export fields differ from pinned schema"),
             (

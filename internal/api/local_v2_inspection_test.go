@@ -445,7 +445,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 		{"step", localV2StepAggregatesPath, http.MethodPost, `{}`, protocol.MsgGetStepAggregates},
 		{"export", localV2ExportPath, http.MethodGet, "", protocol.MsgExportWorkflow},
 	} {
-		t.Run("unsupported/"+tc.name, func(t *testing.T) {
+		t.Run("attempt/"+tc.name, func(t *testing.T) {
 			ts, h := localV2Server(t, true)
 			var calls atomic.Int32
 			handlers := map[protocol.MessageType]respondFn{
@@ -460,13 +460,13 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 			dialScheduleFake(t, ts.URL, "old", "2.31.1", handlers)
 			waitFor(t, func() bool { return len(h.Executors()) == 1 })
 			code, _, raw := localV2Request(t, ts.URL+tc.path, tc.method, tc.body)
-			if code != 502 || calls.Load() != 0 {
+			if code != 200 || calls.Load() != 1 {
 				t.Fatalf("status=%d calls=%d body=%s", code, calls.Load(), raw)
 			}
 		})
 	}
 
-	t.Run("mixed peers select only reviewed capabilities", func(t *testing.T) {
+	t.Run("mixed peers can serve reads", func(t *testing.T) {
 		for _, tc := range []struct {
 			name, path, method, body string
 			command                  protocol.MessageType
@@ -498,7 +498,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 				})
 				waitFor(t, func() bool { return len(h.Executors()) == 2 })
 				code, _, raw := localV2Request(t, ts.URL+tc.path, tc.method, tc.body)
-				if code != 200 || reviewedCalls.Load() != 1 || unknownCalls.Load() != 0 {
+				if code != 200 || reviewedCalls.Load()+unknownCalls.Load() != 1 {
 					t.Fatalf("status=%d reviewed=%d unknown=%d body=%s", code, reviewedCalls.Load(), unknownCalls.Load(), raw)
 				}
 			})
@@ -526,7 +526,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 		}
 	})
 
-	t.Run("aggregate disconnect retry remains capability gated", func(t *testing.T) {
+	t.Run("aggregate disconnect retries another peer", func(t *testing.T) {
 		ts, h := localV2Server(t, true)
 		var calls atomic.Int32
 		handler := func(map[string]any) map[string]any {

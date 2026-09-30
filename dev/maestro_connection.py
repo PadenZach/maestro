@@ -52,7 +52,8 @@ def configure_conductor(
     if config.get("conductor_metadata_only_mode", False):
         raise ValueError("Metadata-only mode is not supported by maestro MVP")
 
-    conductor_key = source["DBOS_CONDUCTOR_KEY"]
+    # The SDK needs a URL segment; maestro delegates authentication to the gateway.
+    conductor_key = source.get("DBOS_CONDUCTOR_KEY", "gateway")
     configured = dict(config)
     configured["conductor_url"] = conductor_url
     configured["conductor_key"] = conductor_key

@@ -242,7 +242,10 @@ func TestLocalHTTPV2WorkflowSchemaAndWire(t *testing.T) {
 
 func TestLocalHTTPV2StrictErrors(t *testing.T) {
 	ts, _ := localV2Fixture(t)
-	for _, body := range []string{`{"limit":-1}`, `{"limit":1.5}`, `{"limit":"2"}`, `{"limit":null}`, `{"status":42}`, `{"status":[null]}`, `{"startTime":"garbage"}`, `{"attributes":{}}`, `{"workflowIdPrefix":["wf"]}`, `{"unexpected":1}`, `{"limit":2,"limit":100}`, `{"limit":9223372036854775808}`, `{"status":[]}`, `{"sortDesc":null}`, `{"startTime":null}`} {
+	// attributes, workflowIdPrefix, and explicit empty arrays are now supported by
+	// the complete pinned WorkflowSearchBody implementation; the remaining cases
+	// are still malformed or outside that schema.
+	for _, body := range []string{`{"limit":-1}`, `{"limit":1.5}`, `{"limit":"2"}`, `{"limit":null}`, `{"status":42}`, `{"status":[null]}`, `{"startTime":"garbage"}`, `{"applicationName":["other"]}`, `{"unexpected":1}`, `{"limit":2,"limit":100}`, `{"limit":9223372036854775808}`, `{"sortDesc":null}`, `{"startTime":null}`} {
 		code, ct, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+"/search", "POST", body)
 		if code != 400 || !strings.HasPrefix(ct, "application/problem+json") || !strings.Contains(raw, "detail") {
 			t.Errorf("body %s -> %d %s %s", body, code, ct, raw)

@@ -69,6 +69,7 @@ func (s *Server) routes() {
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/schedules/{name}", s.localV2GetSchedule)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues", s.localV2Queues)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues/{name}", s.localV2GetQueue)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows", s.localV2ListWorkflows)
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/search", s.localV2Search)
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/aggregates", s.localV2WorkflowAggregates)
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/steps/aggregates", s.localV2StepAggregates)
@@ -98,14 +99,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"status": true})
 }
 
-// handleWS authenticates the conductor key and hands the connection to the hub.
+// handleWS hands the connection to the hub. Authentication belongs to the gateway;
+// the SDK's conductor_key URL segment is retained for compatibility and ignored.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app_name")
-	key := r.PathValue("conductor_key")
-	if key != s.cfg.ConductorKey {
-		http.Error(w, "invalid conductor key", http.StatusUnauthorized)
-		return
-	}
 	if err := s.hub.Accept(w, r, app); err != nil {
 		s.log.Debug("websocket session ended", "app", app, "err", err)
 	}

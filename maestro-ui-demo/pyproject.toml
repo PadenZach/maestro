@@ -1,0 +1,9 @@
+[project]
+name = "maestro-ui-demo"
+version = "0.1.0"
+description = "Synthetic DBOS workflows and related data for the Maestro Console"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dbos>=3.2.0",
+]

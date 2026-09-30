@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -30,14 +31,6 @@ func TestCapabilityPolicyRejectsUnsupportedWithoutSending(t *testing.T) {
 		name, language, version, typ string
 		body                         any
 	}{
-		{"old_attributes", "python", "2.24.0", "list_workflows", map[string]any{"attributes": map[string]any{"team": "only"}}},
-		{"old_queued_app", "python", "2.24.0", "list_queued_workflows", map[string]any{"application_name": []string{"private"}}},
-		{"old_queue_app", "python", "2.24.0", "list_queues", map[string]any{"application_name": []string{"private"}}},
-		{"unknown_sdk", "python", "3.1.1", "list_workflows", map[string]any{"application_name": []string{"private"}}},
-		{"semver_prerelease", "python", "3.1.0rc1", "list_workflows", map[string]any{"schedule_name": []string{"nightly"}}},
-		{"wrong_language", "typescript", "3.1.0", "list_workflows", map[string]any{"attributes": map[string]any{"team": "only"}}},
-		{"unknown_language", "", "3.1.0", "list_workflows", map[string]any{"attributes": map[string]any{"team": "only"}}},
-		{"app_version_not_sdk", "python", "2.24.0", "list_workflows", map[string]any{"schedule_name": []string{"nightly"}}},
 		{"no_restart_3", "python", "3.1.0", "restart", nil},
 		{"no_rewind_2", "python", "2.31.1", "rewind_workflow", nil},
 		{"unknown_mutation", "python", "3.1.1", "rewind_workflow", nil},
@@ -69,9 +62,6 @@ func TestCapabilityPolicyRejectsTypedAndInvalidDiscriminatorsWithoutSending(t *t
 		typ  any
 		body any
 	}{
-		{"typed_workflow_filter", protocol.MsgListWorkflows, map[string]any{"attributes": map[string]any{"team": "private"}}},
-		{"typed_queued_filter", protocol.MsgListQueuedWorkflows, map[string]any{"schedule_name": []string{"secret"}}},
-		{"typed_queue_filter", protocol.MsgListQueues, map[string]any{"application_name": []string{"private"}}},
 		{"typed_rewind", protocol.MsgRewindWorkflow, nil},
 		{"missing_type", nil, nil},
 		{"invalid_type", 7, nil},
@@ -115,8 +105,6 @@ func TestCapabilityPolicyAllowsReviewedPairs(t *testing.T) {
 		{"2.24.0", "restart", nil},
 		{"2.31.1", "restart", nil},
 		{"3.1.0", "rewind_workflow", nil},
-		{"2.31.1", "list_workflows", map[string]any{"attributes": map[string]any{"region": "west"}}},
-		{"3.1.0", "list_queues", map[string]any{"application_name": []string{"app"}}},
 	} {
 		t.Run(tc.version+"/"+tc.typ, func(t *testing.T) {
 			h, ts := testHub(t, time.Second)
@@ -141,65 +129,32 @@ func TestCapabilityPolicyAllowsReviewedPairs(t *testing.T) {
 	}
 }
 
-// Post-fix characterization: normalization also preserves correlation with a
-// reviewed peer and leaves the caller's original request untouched.
-func TestCapabilityPolicyTypedRequestSelectsReviewedPeer(t *testing.T) {
+func TestReadDispatchPreservesFiltersWithoutSDKIdentity(t *testing.T) {
 	h, ts := testHub(t, time.Second)
-	old := versionedPeer(t, ts.URL, "python", "2.24.0", "app-v1")
-	newer := versionedPeer(t, ts.URL, "python", "3.1.0", "app-v1")
-	registered(t, h, 2)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	req := protocol.Request{"type": protocol.MsgListWorkflows, "body": map[string]any{"attributes": map[string]any{"team": "only"}}}
-	first := request(h, ctx, req)
-	_, wire := frame(t, ctx, newer)
-	if wire["type"] != string(protocol.MsgListWorkflows) {
-		t.Fatalf("request not sent to reviewed peer: %v", wire)
-	}
-	reply(t, ctx, newer, map[string]any{"type": "list_workflows", "request_id": wire["request_id"], "output": []any{}})
-	if got := await(t, first); got.err != nil {
-		t.Fatal(got.err)
-	}
-	if req["type"] != protocol.MsgListWorkflows {
-		t.Fatalf("caller request changed: %v", req)
-	}
-	// A safe read is the old peer's next frame; the filtered read wasn't sent there.
-	newer.CloseNow()
+	peer := versionedPeer(t, ts.URL, "", "", "app-v1")
 	registered(t, h, 1)
-	next := request(h, ctx, protocol.GetWorkflowRequest("safe", false, false))
-	_, wire = frame(t, ctx, old)
-	if wire["type"] != "get_workflow" || wire["workflow_id"] != "safe" {
-		t.Fatalf("unsupported request reached old peer: %v", wire)
-	}
-	reply(t, ctx, old, map[string]any{"type": "get_workflow", "request_id": wire["request_id"], "output": nil})
-	if got := await(t, next); got.err != nil {
-		t.Fatal(got.err)
-	}
-}
-
-func TestCapabilityPolicySelectsAndRechecksPeers(t *testing.T) {
-	h, ts := testHub(t, time.Second)
-	old := versionedPeer(t, ts.URL, "python", "2.24.0", "app-v1")
-	_ = old
-	newer := versionedPeer(t, ts.URL, "python", "3.1.0", "app-v1")
-	registered(t, h, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	req := protocol.Request{"type": "list_queued_workflows", "body": map[string]any{"attributes": map[string]any{"team": "only"}}}
-	first := request(h, ctx, req)
-	_, m := frame(t, ctx, newer)
-	if m["type"] != "list_queued_workflows" {
-		t.Fatalf("wrong peer/request: %v", m)
-	}
-	// A read may retry after this eligible peer drops, but not via an old peer.
-	_ = newer.CloseNow()
-	r := await(t, first)
-	if r.err == nil {
-		t.Fatalf("retry bypassed capability: %s", r.data)
-	}
-	registered(t, h, 1)
-	second := await(t, request(h, ctx, req))
-	if second.err == nil || errors.Is(second.err, context.DeadlineExceeded) {
-		t.Fatalf("old peer received retry: %v", second.err)
+	for _, command := range []protocol.MessageType{
+		protocol.MsgListWorkflows, protocol.MsgListQueuedWorkflows, protocol.MsgListQueues,
+		protocol.MsgListSchedules, protocol.MsgGetSchedule, protocol.MsgGetWorkflowAggregates,
+		protocol.MsgGetStepAggregates, protocol.MsgExportWorkflow,
+	} {
+		body := map[string]any{"attributes": map[string]any{"team": "only"}, "application_name": []string{"app"}, "schedule_name": []string{}, "has_parent": false}
+		req := protocol.Request{"type": command, "body": body}
+		pending := request(h, ctx, req)
+		_, wire := frame(t, ctx, peer)
+		want, _ := json.Marshal(body)
+		got, _ := json.Marshal(wire["body"])
+		if wire["type"] != string(command) || string(got) != string(want) {
+			t.Fatalf("read command or filters changed: %v", wire)
+		}
+		reply(t, ctx, peer, map[string]any{"type": string(command), "request_id": wire["request_id"], "output": []any{}})
+		if result := await(t, pending); result.err != nil {
+			t.Fatal(result.err)
+		}
+		if req["type"] != command {
+			t.Fatalf("caller request changed: %v", req)
+		}
 	}
 }

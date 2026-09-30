@@ -50,7 +50,9 @@ func (b ListWorkflowsBody) toMap() map[string]any {
 		"queues_only": b.QueuesOnly,
 	}
 	putStrs := func(k string, v []string) {
-		if len(v) > 0 {
+		// A non-nil empty slice is an explicit [] filter. A nil slice is omitted,
+		// preserving the HTTP distinction between empty, null, and absent arrays.
+		if v != nil {
 			m[k] = v
 		}
 	}

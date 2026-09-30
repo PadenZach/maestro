@@ -406,7 +406,7 @@ func TestLocalHTTPV2ScheduleRequestValidationAndCapability(t *testing.T) {
 	})
 	waitFor(t, func() bool { return len(unsupportedHub.Executors()) == 1 })
 	code, ct, raw := localV2Request(t, unsupported.URL+localV2ScheduleRoot, "GET", "")
-	if code != 502 || !strings.HasPrefix(ct, "application/problem+json") || unsupportedCalls.Load() != 0 {
-		t.Fatalf("unsupported SDK did not fail closed: status=%d calls=%d body=%s", code, unsupportedCalls.Load(), raw)
+	if code != 200 || !strings.HasPrefix(ct, "application/json") || unsupportedCalls.Load() != 1 || strings.TrimSpace(raw) != "[]" {
+		t.Fatalf("schedule read not attempted: status=%d calls=%d body=%s", code, unsupportedCalls.Load(), raw)
 	}
 }

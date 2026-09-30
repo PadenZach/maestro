@@ -180,12 +180,17 @@ class ConfigureConductorTests(unittest.TestCase):
                 self.assertIsNone(config.get("conductor_url"))
                 self.assertIsNone(config.get("conductor_key"))
 
-    def test_conductor_key_is_required_from_environment_without_format_rules(self):
+    def test_conductor_key_defaults_to_sdk_placeholder_without_format_rules(self):
         config = {"name": "orders"}
         supplied_environment = {"DBOS_CONDUCTOR_URL": "wss://maestro.example.test"}
-        with self.assertRaises(KeyError) as failure:
+        try:
             configure_conductor(config, supplied_environment)
-        self.assertEqual(failure.exception.args, ("DBOS_CONDUCTOR_KEY",))
+        except KeyError:
+            self.fail("Gateway authentication must not require a conductor key")
+        self.assertEqual(
+            configure_conductor(config, supplied_environment)["conductor_key"],
+            "gateway",
+        )
         self.assertEqual(config, {"name": "orders"})
         self.assertEqual(
             supplied_environment,

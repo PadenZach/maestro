@@ -1,12 +1,10 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -44,12 +42,6 @@ func localV2Failure(w http.ResponseWriter, err error) {
 	localV2Problem(w, status, err.Error())
 }
 
-// Only the approved subset of WorkflowSearchBody is accepted. Unknown fields and
-// empty lists cannot silently broaden an agent's search.
-var localSearchFields = map[string]struct{}{
-	"workflowIds": {}, "user": {}, "status": {}, "workflowName": {}, "appVersion": {}, "queueName": {}, "startTime": {}, "endTime": {}, "sortDesc": {}, "queuesOnly": {}, "limit": {}, "offset": {},
-}
-
 func localV2Int(raw json.RawMessage, name string) (int, error) {
 	if len(raw) == 0 || raw[0] < '0' || raw[0] > '9' {
 		return 0, fmt.Errorf("%s must be a nonnegative integer", name)
@@ -84,113 +76,6 @@ func localV2Query(r *http.Request) (limit, offset *int, err error) {
 	}
 	return
 }
-func localV2SearchBody(raw []byte) (protocol.ListWorkflowsBody, error) {
-	fields := make(map[string]json.RawMessage)
-	d := json.NewDecoder(bytes.NewReader(raw))
-	start, err := d.Token()
-	if err != nil || start != json.Delim('{') {
-		return protocol.ListWorkflowsBody{}, errors.New("expected JSON search object")
-	}
-	for d.More() {
-		token, err := d.Token()
-		if err != nil {
-			return protocol.ListWorkflowsBody{}, errors.New("invalid search key")
-		}
-		name := token.(string)
-		if _, exists := fields[name]; exists {
-			return protocol.ListWorkflowsBody{}, fmt.Errorf("duplicate search field %q", name)
-		}
-		var value json.RawMessage
-		if err := d.Decode(&value); err != nil {
-			return protocol.ListWorkflowsBody{}, errors.New("invalid search value")
-		}
-		fields[name] = value
-	}
-	if _, err := d.Token(); err != nil {
-		return protocol.ListWorkflowsBody{}, errors.New("invalid search object")
-	}
-	var extra any
-	if err := d.Decode(&extra); err != io.EOF {
-		return protocol.ListWorkflowsBody{}, errors.New("unexpected trailing JSON")
-	}
-	var b protocol.ListWorkflowsBody
-	for name, value := range fields {
-		if _, ok := localSearchFields[name]; !ok {
-			return b, fmt.Errorf("unsupported search field %q", name)
-		}
-		if name == "limit" || name == "offset" {
-			n, err := localV2Int(value, name)
-			if err != nil {
-				return b, err
-			}
-			if name == "limit" {
-				b.Limit = &n
-			} else {
-				b.Offset = &n
-			}
-			continue
-		}
-		if name == "sortDesc" || name == "queuesOnly" {
-			if string(value) == "null" {
-				return b, fmt.Errorf("%s cannot be null", name)
-			}
-			var v bool
-			if err := json.Unmarshal(value, &v); err != nil || string(value) != "true" && string(value) != "false" {
-				return b, fmt.Errorf("%s must be boolean", name)
-			}
-			if name == "sortDesc" {
-				b.SortDesc = v
-			} else {
-				b.QueuesOnly = v
-			}
-			continue
-		}
-		if name == "startTime" || name == "endTime" {
-			var v string
-			if err := json.Unmarshal(value, &v); err != nil || v == "" {
-				return b, fmt.Errorf("%s must be RFC3339", name)
-			}
-			if _, err := time.Parse(time.RFC3339Nano, v); err != nil {
-				return b, fmt.Errorf("%s must be RFC3339: %w", name, err)
-			}
-			if name == "startTime" {
-				b.StartTime = v
-			} else {
-				b.EndTime = v
-			}
-			continue
-		}
-		// The OpenAPI makes these arrays nullable. Null means no filter; an explicit
-		// empty array is rejected rather than silently matching everything.
-		if string(value) == "null" {
-			continue
-		}
-		var arr []string
-		if err := json.Unmarshal(value, &arr); err != nil || len(arr) == 0 {
-			return b, fmt.Errorf("%s must be a nonempty string array", name)
-		}
-		for _, v := range arr {
-			if v == "" {
-				return b, fmt.Errorf("%s contains an empty value", name)
-			}
-		}
-		switch name {
-		case "workflowIds":
-			b.WorkflowUUIDs = arr
-		case "user":
-			b.AuthenticatedUser = arr
-		case "status":
-			b.Status = arr
-		case "workflowName":
-			b.WorkflowName = arr
-		case "appVersion":
-			b.ApplicationVer = arr
-		case "queueName":
-			b.QueueName = arr
-		}
-	}
-	return b, nil
-}
 
 // Shared read operations also serve the existing UI/API; only the HTTP representation differs.
 func (s *Server) readWorkflow(ctx context.Context, app, id string, loadInput, loadOutput bool) (*protocol.WorkflowsOutput, error) {
@@ -213,45 +98,6 @@ func (s *Server) readWorkflows(ctx context.Context, app string, b protocol.ListW
 		return nil, err
 	}
 	return resp.Output, nil
-}
-func (s *Server) localV2Search(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
-		return
-	}
-	query, queryErr := url.ParseQuery(r.URL.RawQuery)
-	if queryErr != nil || len(query) != 0 {
-		localV2Problem(w, 400, "search query parameters are unsupported or malformed")
-		return
-	}
-	raw, err := io.ReadAll(r.Body)
-	if err != nil {
-		localV2Problem(w, 400, "cannot read search body")
-		return
-	}
-	b, err := localV2SearchBody(raw)
-	if err != nil {
-		localV2Problem(w, 400, err.Error())
-		return
-	}
-	rows, err := s.readWorkflows(r.Context(), r.PathValue("app"), b)
-	if err != nil {
-		localV2Failure(w, err)
-		return
-	}
-	if rows == nil {
-		localV2Failure(w, errors.New("invalid executor list_workflows output: null"))
-		return
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		v, err := localV2Workflow(row)
-		if err != nil {
-			localV2Failure(w, err)
-			return
-		}
-		out = append(out, v)
-	}
-	writeJSON(w, 200, out)
 }
 func (s *Server) localV2Get(w http.ResponseWriter, r *http.Request) {
 	if !localV2Allowed(w, r) {

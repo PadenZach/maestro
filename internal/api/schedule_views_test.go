@@ -510,35 +510,28 @@ func TestScheduleConsoleErrorsRemainExplicit(t *testing.T) {
 	})
 }
 
-func TestScheduleConsoleCapabilityFailsClosedWithoutDispatch(t *testing.T) {
-	for _, tc := range []struct{ language, version string }{
-		{"python", "2.31.1"},
-		{"typescript", "3.1.0"},
-	} {
-		t.Run(tc.language+"/"+tc.version, func(t *testing.T) {
-			ts, h := newTestServer(t)
-			var calls atomic.Int32
-			dialScheduleConsoleFake(t, ts.URL, "fixture-app", "unsupported", tc.language, tc.version, map[protocol.MessageType]respondFn{
-				protocol.MsgListSchedules: func(map[string]any) map[string]any {
-					calls.Add(1)
-					return map[string]any{"output": []any{}}
-				},
-				protocol.MsgGetSchedule: func(map[string]any) map[string]any {
-					calls.Add(1)
-					return map[string]any{"output": scheduleConsoleWireRecord("nightly")}
-				},
-			})
-			waitFor(t, func() bool { return len(h.Executors()) == 1 })
-			for _, path := range []string{"/apps/fixture-app/schedules", "/apps/fixture-app/schedule?name=nightly"} {
-				code, body := getBody(t, ts.URL+path)
-				if code != http.StatusBadGateway || !strings.Contains(body, "maestro: unsupported executor capability") {
-					t.Errorf("unsupported schedule read %s: status=%d body=%s", path, code, body)
-				}
-			}
-			if calls.Load() != 0 {
-				t.Fatalf("unsupported schedule commands dispatched %d times", calls.Load())
-			}
-		})
+func TestScheduleConsoleAttemptsReadsWithoutSDKIdentity(t *testing.T) {
+	ts, h := newTestServer(t)
+	var calls atomic.Int32
+	dialScheduleConsoleFake(t, ts.URL, "fixture-app", "peer", "", "", map[protocol.MessageType]respondFn{
+		protocol.MsgListSchedules: func(map[string]any) map[string]any {
+			calls.Add(1)
+			return map[string]any{"output": []any{scheduleConsoleWireRecord("nightly")}}
+		},
+		protocol.MsgGetSchedule: func(map[string]any) map[string]any {
+			calls.Add(1)
+			return map[string]any{"output": scheduleConsoleWireRecord("nightly")}
+		},
+	})
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	for _, path := range []string{"/apps/fixture-app/schedules", "/apps/fixture-app/schedule?name=nightly"} {
+		code, body := getBody(t, ts.URL+path)
+		if code != http.StatusOK || !strings.Contains(body, "nightly") {
+			t.Errorf("schedule read %s: status=%d body=%s", path, code, body)
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("schedule commands dispatched %d times, want 2", calls.Load())
 	}
 }
 

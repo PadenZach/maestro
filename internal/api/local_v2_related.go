@@ -11,31 +11,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/zpaden/maestro/internal/hub"
 	"github.com/zpaden/maestro/internal/protocol"
 )
 
 var localV2AppName = regexp.MustCompile(`^[a-z0-9-_]+$`)
-
-// This preflight gives an early error when an app snapshot contains only
-// unreviewed peers. Hub.Request independently applies the same feature to each
-// selected peer and retry candidate, which is the authoritative dispatch gate.
-func (s *Server) localV2RelatedCapability(app string) error {
-	matching := false
-	for _, executor := range s.hub.Executors() {
-		if executor.App != app {
-			continue
-		}
-		matching = true
-		if protocol.SupportsFeature(executor.Language, executor.DBOSVersion, protocol.FeatureRelatedReads) {
-			return nil
-		}
-	}
-	if matching {
-		return fmt.Errorf("%w: related reads require a reviewed SDK handler", hub.ErrUnsupportedCapability)
-	}
-	return nil
-}
 
 func localV2RelatedRequest(w http.ResponseWriter, r *http.Request) (app, workflowID string, ok bool) {
 	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
@@ -165,9 +144,6 @@ func localV2RelatedWorkflowExists(raw []byte) (bool, error) {
 }
 
 func (s *Server) localV2ReadRelated(r *http.Request, app, workflowID, field string, request protocol.Request) ([]json.RawMessage, int, error) {
-	if err := s.localV2RelatedCapability(app); err != nil {
-		return nil, 0, err
-	}
 	// The related-data handlers return an empty collection for both an absent
 	// workflow and an existing workflow with no data. Check existence without
 	// opaque blobs and without applying the strict official Workflow mapper.

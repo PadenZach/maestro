@@ -12,7 +12,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from dbos import DBOS
+from dbos import DBOS, SetEnqueueOptions, SetWorkflowAttributes
 from dbos._conductor.protocol import (
     EventOutput,
     NotificationOutput,
@@ -59,6 +59,11 @@ def gate_workflow(value: str) -> str:
 @DBOS.workflow()
 def gate_empty_related_workflow() -> str:
     return "empty-related"
+
+
+@DBOS.workflow()
+def gate_workflow_read_fixture(value: str) -> str:
+    return f"workflow-read:{value}"
 
 
 @DBOS.workflow()
@@ -142,6 +147,23 @@ try:
     empty_related_handle = DBOS.start_workflow(gate_empty_related_workflow)
     assert empty_related_handle.get_result() == "empty-related"
 
+    # Public queue/context operations produce completed rows with genuine
+    # priority, update, dequeue, completion, attributes, and queue metadata.
+    # The unique workflow name keeps existing aggregate fixtures unchanged.
+    workflow_read_handles = []
+    for ordinal in ("first", "second"):
+        with (
+            SetEnqueueOptions(
+                priority=7, queue_partition_key="workflow-read-partition"
+            ),
+            SetWorkflowAttributes({"tenant": "workflow-read", "ordinal": ordinal}),
+        ):
+            workflow_read_handle = gate_queue.enqueue(
+                gate_workflow_read_fixture, ordinal
+            )
+        assert workflow_read_handle.get_result() == f"workflow-read:{ordinal}"
+        workflow_read_handles.append(workflow_read_handle)
+
     # The zero-limit SDK queue is a deterministic barrier: its target remains
     # enqueued while public DBOS.send operations create pending (unconsumed)
     # notifications, with no timing sleep or direct database write.
@@ -164,6 +186,79 @@ try:
     assert workflow_info is not None
     workflow_wire = WorkflowsOutput.from_workflow_information(workflow_info)
     assert workflow_wire.Input is not None and workflow_wire.Output is not None
+    workflow_without_blobs_info = dbos._sys_db.list_workflows(
+        workflow_ids=[handle.workflow_id], load_input=False, load_output=False
+    )
+    assert len(workflow_without_blobs_info) == 1
+    workflow_without_blobs_wire = WorkflowsOutput.from_workflow_information(
+        workflow_without_blobs_info[0]
+    )
+    assert (
+        workflow_without_blobs_wire.Input is None
+        and workflow_without_blobs_wire.Output is None
+        and workflow_without_blobs_wire.Error is None
+    )
+
+    workflow_read_sha256 = {}
+    workflow_read_without_blobs_sha256 = {}
+    workflow_read_executor_id = None
+    for workflow_read_handle in workflow_read_handles:
+        workflow_read_info = get_workflow(
+            dbos._sys_db, workflow_read_handle.workflow_id
+        )
+        assert workflow_read_info is not None
+        workflow_read_wire = WorkflowsOutput.from_workflow_information(
+            workflow_read_info
+        )
+        for field_name, valid in (
+            ("status", workflow_read_wire.Status == "SUCCESS"),
+            (
+                "workflow name",
+                workflow_read_wire.WorkflowName == "gate_workflow_read_fixture",
+            ),
+            ("priority", workflow_read_wire.Priority == "7"),
+            ("updated at", workflow_read_wire.UpdatedAt is not None),
+            ("dequeued at", workflow_read_wire.DequeuedAt is not None),
+            ("completed at", workflow_read_wire.CompletedAt is not None),
+            ("input", workflow_read_wire.Input is not None),
+            ("output", workflow_read_wire.Output is not None),
+            (
+                "executor ID",
+                isinstance(workflow_read_wire.ExecutorID, str)
+                and bool(workflow_read_wire.ExecutorID),
+            ),
+            ("queue name", workflow_read_wire.QueueName == gate_queue.name),
+            ("attributes", workflow_read_wire.Attributes is not None),
+        ):
+            assert valid, f"queued workflow fixture lacks {field_name}"
+        if workflow_read_executor_id is None:
+            workflow_read_executor_id = workflow_read_wire.ExecutorID
+        assert workflow_read_wire.ExecutorID == workflow_read_executor_id, (
+            "queued workflow fixtures have inconsistent executor IDs"
+        )
+        workflow_read_sha256[workflow_read_handle.workflow_id] = wire_digest(
+            asdict(workflow_read_wire)
+        )
+
+    workflow_read_without_blobs = dbos._sys_db.list_workflows(
+        workflow_ids=[handle.workflow_id for handle in workflow_read_handles],
+        load_input=False,
+        load_output=False,
+    )
+    assert len(workflow_read_without_blobs) == len(workflow_read_handles)
+    for workflow_read_info in workflow_read_without_blobs:
+        workflow_read_wire = WorkflowsOutput.from_workflow_information(
+            workflow_read_info
+        )
+        assert (
+            workflow_read_wire.Input is None
+            and workflow_read_wire.Output is None
+            and workflow_read_wire.Error is None
+        )
+        workflow_read_without_blobs_sha256[workflow_read_wire.WorkflowUUID] = (
+            wire_digest(asdict(workflow_read_wire))
+        )
+    assert set(workflow_read_sha256) == set(workflow_read_without_blobs_sha256)
 
     step_infos = dbos._sys_db.list_workflow_steps(handle.workflow_id, load_output=True)
     step_wire = next(
@@ -298,6 +393,13 @@ try:
         "workflow_id": handle.workflow_id,
         "empty_related_workflow_id": empty_related_handle.workflow_id,
         "notification_workflow_id": notification_handle.workflow_id,
+        "workflow_read_sha256": workflow_read_sha256,
+        "workflow_read_without_blobs_sha256": workflow_read_without_blobs_sha256,
+        "workflow_read_executor_id": workflow_read_executor_id,
+        "workflow_sha256": wire_digest(asdict(workflow_wire)),
+        "workflow_without_blobs_sha256": wire_digest(
+            asdict(workflow_without_blobs_wire)
+        ),
         "input_sha256": hashlib.sha256(workflow_wire.Input.encode()).hexdigest(),
         "output_sha256": hashlib.sha256(workflow_wire.Output.encode()).hexdigest(),
         "step_output_sha256": hashlib.sha256(step_wire.output.encode()).hexdigest(),
