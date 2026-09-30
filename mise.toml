@@ -51,6 +51,10 @@ depends = ["fmt:check", "build", "vet", "test"]
 description = "Opt-in released-Python 2.24.0/2.31.1/3.1.0 SQLite compatibility boundary"
 run = "python3 -I -S dev/tests/python/install.py"
 
+[tasks."postgres:gate"]
+description = "Opt-in isolated PostgreSQL 18 + DBOS Python SDK 3.1.0 read smoke (explicit tool paths required)"
+run = "python3 -B -I -S dev/tests/acceptance/postgres_gate.py"
+
 [tasks."dbosctl:gate"]
 description = "Opt-in pinned v0.10.1 dbosctl read-only CLI + fake-executor gate"
 run = "python3 -I -S dev/tests/dbosctl_gate.py"

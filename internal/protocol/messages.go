@@ -107,6 +107,7 @@ func (s WorkflowSteps) HasFunctionID() bool { return s.hasFunctionID }
 
 // QueueOutput is a queue's configuration. Mirrors protocol.py:QueueOutput.
 type QueueOutput struct {
+	hasRequiredFields           bool
 	Name                        string   `json:"name"`
 	Concurrency                 *int     `json:"concurrency"`
 	WorkerConcurrency           *int     `json:"worker_concurrency"`
@@ -121,6 +122,47 @@ type QueueOutput struct {
 	PartitionRateLimitMax       *int     `json:"partition_rate_limit_max"`
 	PartitionRateLimitPeriodSec *float64 `json:"partition_rate_limit_period_sec"`
 }
+
+// UnmarshalJSON retains presence of every HTTP-required queue field without
+// changing the SDK wire representation or legacy local API zero-value behavior.
+func (q *QueueOutput) UnmarshalJSON(data []byte) error {
+	type fields QueueOutput
+	var decoded fields
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var required struct {
+		Name               *string  `json:"name"`
+		PriorityEnabled    *bool    `json:"priority_enabled"`
+		PartitionQueue     *bool    `json:"partition_queue"`
+		PollingIntervalSec *float64 `json:"polling_interval_sec"`
+	}
+	if err := json.Unmarshal(data, &required); err != nil {
+		return err
+	}
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(data, &present); err != nil {
+		return err
+	}
+	allFieldsPresent := true
+	for _, name := range [...]string{
+		"name", "concurrency", "worker_concurrency", "rate_limit_max",
+		"rate_limit_period_sec", "priority_enabled", "partition_queue",
+		"polling_interval_sec", "application_name", "partition_concurrency",
+		"partition_worker_concurrency", "partition_rate_limit_max",
+		"partition_rate_limit_period_sec",
+	} {
+		if _, ok := present[name]; !ok {
+			allFieldsPresent = false
+			break
+		}
+	}
+	*q = QueueOutput(decoded)
+	q.hasRequiredFields = allFieldsPresent && required.Name != nil && required.PriorityEnabled != nil && required.PartitionQueue != nil && required.PollingIntervalSec != nil
+	return nil
+}
+
+func (q QueueOutput) HasRequiredFields() bool { return q.hasRequiredFields }
 
 // EventOutput is one set_event key/value pair. Mirrors protocol.py:EventOutput.
 type EventOutput struct {

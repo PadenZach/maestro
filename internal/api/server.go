@@ -59,6 +59,8 @@ func (s *Server) routes() {
 
 	// The official HTTP subset is an explicit loopback-only test adapter.
 	if s.cfg.LocalHTTPV2 {
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues", s.localV2Queues)
+		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/queues/{name}", s.localV2GetQueue)
 		s.mux.HandleFunc("POST /v2/orgs/{org}/apps/{app}/workflows/search", s.localV2Search)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}", s.localV2Get)
 		s.mux.HandleFunc("GET /v2/orgs/{org}/apps/{app}/workflows/{id}/steps", s.localV2Steps)

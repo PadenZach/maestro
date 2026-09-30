@@ -10,3 +10,6 @@
 
 # Private local planning, historical handoffs and retired assistant workflow drafts.
 /.planning/
+
+# Local agent run state and session-bound progress schedules.
+/.pi/subagents/

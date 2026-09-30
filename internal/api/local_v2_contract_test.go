@@ -146,7 +146,7 @@ func assertLocalV2Schema(t *testing.T, schema string, value map[string]any) {
 		}
 		valid := false
 		for _, a := range allowed {
-			if a == actual {
+			if a == actual || a == "number" && actual == "integer" {
 				valid = true
 			}
 		}
