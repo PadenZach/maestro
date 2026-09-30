@@ -8,14 +8,15 @@
 <div class="filter-bar">
   <form hx-get="/apps/{{$d.App}}/workflows/rows"
         hx-target="#wf-rows"
-        hx-trigger="change, search, keyup delay:350ms"
+        hx-trigger="input delay:350ms, change, submit"
         hx-indicator="#wf-loading">
     <select name="status">
       <option value="">All statuses</option>
       {{range $d.Statuses}}<option value="{{.}}" {{if eq . $d.Filter.Status}}selected{{end}}>{{.}}</option>{{end}}
     </select>
-    <input type="text" name="name" value="{{$d.Filter.Name}}" placeholder="Workflow name">
+    <input type="search" name="name" value="{{$d.Filter.Name}}" aria-label="Search workflow names" placeholder="Search by part of workflow name">
     <input type="search" name="id_prefix" value="{{$d.Filter.IDPrefix}}" placeholder="Search by workflow ID prefix">
+    <input type="text" name="queue" value="{{$d.Filter.Queue}}" aria-label="Queue name" placeholder="Queue name">
     <span id="wf-loading" class="htmx-indicator">…</span>
   </form>
 </div>

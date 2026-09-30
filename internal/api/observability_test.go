@@ -65,7 +65,7 @@ func TestListWorkflows_FiltersOnWire(t *testing.T) {
 	})
 	waitFor(t, func() bool { return len(h.Executors()) == 1 })
 
-	getBody(t, ts.URL+"/apps/myapp/workflows/rows?status=ERROR&name=wf&id_prefix=id_e1&offset=25")
+	getBody(t, ts.URL+"/api/myapp/workflows?status=ERROR&name=wf&id_prefix=id_e1&offset=25")
 
 	body := fe.body(t, protocol.MsgListWorkflows)
 	assertStrInList(t, body, "status", "ERROR")

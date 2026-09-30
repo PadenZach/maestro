@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/zpaden/maestro/internal/hub"
 	"github.com/zpaden/maestro/internal/protocol"
@@ -200,7 +201,8 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	f := parseFilter(r)
-	rows, err := s.fetchRows(r.Context(), app, f, 0)
+	f.Name = strings.TrimSpace(f.Name)
+	rows, err := s.fetchConsoleRows(r.Context(), app, f, 0)
 	if err != nil {
 		s.renderErrorPage(w, workflowsCrumbs(app), err)
 		return
@@ -222,8 +224,9 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWorkflowRows(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	f := parseFilter(r)
+	f.Name = strings.TrimSpace(f.Name)
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-	rows, err := s.fetchRows(r.Context(), app, f, offset)
+	rows, err := s.fetchConsoleRows(r.Context(), app, f, offset)
 	if err != nil {
 		partialError(w, err)
 		return
