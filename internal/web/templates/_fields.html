@@ -1,0 +1,5 @@
+{{define "inspection_fields"}}
+<dl class="inspection-fields">
+{{range .}}<div data-field="{{.Name}}"><dt>{{.Name}}{{if .Note}} <span class="subtle">({{.Note}})</span>{{end}}</dt><dd><pre class="field-value mono">{{.Value}}</pre></dd></div>{{end}}
+</dl>
+{{end}}

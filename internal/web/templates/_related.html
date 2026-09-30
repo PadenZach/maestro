@@ -1,0 +1,39 @@
+{{define "related_data"}}
+<section class="panel">
+  <h2>Events</h2>
+  {{if .EventsError}}<div class="flash err">{{.EventsError}}</div>{{else}}
+  {{if not .Events}}<p>No events recorded.</p>{{end}}
+  <table class="data-table">
+    <thead><tr><th>Key</th><th>Value</th></tr></thead>
+    <tbody>{{range .Events}}<tr><td class="mono">{{.Key}}</td><td class="mono"><pre class="opaque-value">{{opaqueValue .Value}}</pre></td></tr>{{end}}</tbody>
+  </table>
+  {{end}}
+</section>
+
+
+<section class="panel">
+  <h2>Notifications</h2>
+  {{if .NotificationsError}}<div class="flash err">{{.NotificationsError}}</div>{{else}}
+  {{if not .Notifications}}<p>No notifications recorded.</p>{{end}}
+  <table class="data-table">
+    <thead><tr><th>Topic</th><th>Message</th><th>Created at (SDK epoch milliseconds)</th><th>Consumed</th></tr></thead>
+    <tbody>{{range .Notifications}}<tr><td class="mono">{{nullableValue .Topic}}</td><td class="mono"><pre class="opaque-value">{{opaqueValue .Message}}</pre></td><td class="mono">{{.CreatedAtEpochMS}}</td><td>{{.Consumed}}</td></tr>{{end}}</tbody>
+  </table>
+  {{end}}
+</section>
+
+
+<section class="panel">
+  <h2>Streams</h2>
+  {{if .StreamsError}}<div class="flash err">{{.StreamsError}}</div>{{else}}
+  {{if not .Streams}}<p>No streams recorded.</p>{{end}}
+  {{range .Streams}}
+  <div class="stream">
+    <div class="blob-head mono">{{.Key}}</div>
+    {{if not .Values}}<p>No entries recorded.</p>{{end}}
+    <ul class="stream-values">{{range .Values}}<li class="mono"><pre class="opaque-value">{{opaqueValue .}}</pre></li>{{end}}</ul>
+  </div>
+  {{end}}
+  {{end}}
+</section>
+{{end}}

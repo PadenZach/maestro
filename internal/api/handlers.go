@@ -92,7 +92,11 @@ type queuesData struct {
 	Queues []protocol.QueueOutput
 }
 
-type blobData struct{ Title, Content string }
+type blobData struct {
+	Title, Content string
+	Available      bool
+	Missing        bool
+}
 
 // --- dispatcher helper ------------------------------------------------------
 
@@ -294,29 +298,15 @@ func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Side-panel refusals do not blank the detail or poison a healthy socket,
-	// but must remain visible instead of looking like an empty data set.
-	var events protocol.GetWorkflowEventsResponse
-	eventsErr := s.dispatch(r.Context(), app, protocol.GetWorkflowEventsRequest(id), &events)
-	var notes protocol.GetWorkflowNotificationsResponse
-	notesErr := s.dispatch(r.Context(), app, protocol.GetWorkflowNotificationsRequest(id), &notes)
-	var streams protocol.GetWorkflowStreamsResponse
-	streamsErr := s.dispatch(r.Context(), app, protocol.GetWorkflowStreamsRequest(id), &streams)
+	data := s.readWorkflowRelated(r.Context(), app, id)
+	data.Live = live
 
 	s.web.Page(w, "workflow_detail", page{
 		Title:         id + " · Workflow",
 		AppsAvailable: s.appsAvailable(),
-		Status:        s.statusForPage(eventsErr != nil || notesErr != nil || streamsErr != nil),
+		Status:        s.statusForPage(data.EventsError != "" || data.NotificationsError != "" || data.StreamsError != ""),
 		Crumbs:        detailCrumbs(app, id),
-		Data: detailData{
-			Live:               live,
-			Events:             events.Events,
-			Notifications:      notes.Notifications,
-			Streams:            streams.Streams,
-			EventsError:        htmlErrorText(eventsErr),
-			NotificationsError: htmlErrorText(notesErr),
-			StreamsError:       htmlErrorText(streamsErr),
-		},
+		Data:          data,
 	})
 }
 
@@ -334,7 +324,7 @@ func (s *Server) handleWorkflowLive(w http.ResponseWriter, r *http.Request) {
 // buildDetailLive fetches the workflow header + steps and assembles the pollable
 // live region (status, actions, gantt timeline).
 func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (detailLive, error) {
-	wf, err := s.readWorkflow(ctx, app, id, false, false)
+	wf, err := s.readWorkflow(ctx, app, id, true, true)
 	if err != nil {
 		return detailLive{}, err
 	}
@@ -342,7 +332,7 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 		return detailLive{}, fmt.Errorf("workflow %q not found", id)
 	}
 
-	steps, err := s.readSteps(ctx, app, id, false, nil, nil)
+	steps, err := s.readSteps(ctx, app, id, true, nil, nil)
 	if err != nil {
 		return detailLive{}, err
 	}
@@ -358,12 +348,31 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
-	steps, err := s.readSteps(r.Context(), app, id, false, nil, nil)
+	wf, err := s.readWorkflow(r.Context(), app, id, false, false)
 	if err != nil {
 		partialError(w, err)
 		return
 	}
-	s.web.Partial(w, "timeline", web.BuildTimeline(app, id, steps))
+	if wf == nil {
+		partialError(w, fmt.Errorf("child workflow %q not found", id))
+		return
+	}
+	ancestors := r.URL.Query()["ancestor"]
+	for _, ancestor := range ancestors {
+		if ancestor == id {
+			partialError(w, fmt.Errorf("Workflow relationship cycle at %q", id))
+			return
+		}
+	}
+	steps, err := s.readSteps(r.Context(), app, id, true, nil, nil)
+	if err != nil {
+		partialError(w, err)
+		return
+	}
+	tl := web.BuildTimeline(app, id, steps)
+	tl.ChildStatus = deref(wf.Status)
+	web.SetTimelineBranch(&tl, r.URL.Query().Get("branch"), ancestors)
+	s.web.Partial(w, "timeline", tl)
 }
 
 func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
@@ -379,16 +388,22 @@ func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if wf == nil {
+		partialError(w, fmt.Errorf("workflow %q not found", id))
+		return
+	}
 	data := blobData{Title: "Output"}
 	if loadInput {
 		data.Title = "Input"
 	}
-	if wf != nil {
-		if loadInput {
-			data.Content = deref(wf.Input)
-		} else {
-			data.Content = deref(wf.Output)
-		}
+	if loadInput {
+		data.Content = deref(wf.Input)
+		data.Available = wf.Input != nil
+		data.Missing = !wf.FieldPresent("Input")
+	} else {
+		data.Content = deref(wf.Output)
+		data.Available = wf.Output != nil
+		data.Missing = !wf.FieldPresent("Output")
 	}
 	s.web.Partial(w, "blob", data)
 }

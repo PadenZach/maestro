@@ -496,3 +496,108 @@ a:hover {
 .htmx-request.htmx-indicator {
   opacity: 1;
 }
+
+/* Alpine controls visibility before its initial render. */
+[x-cloak] { display: none !important; }
+button:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.inspection-fields { margin: 1rem 0; }
+.inspection-fields > div { border-bottom: 1px solid var(--border); padding: .7rem 0; }
+.inspection-fields dt { font-weight: 600; overflow-wrap: anywhere; }
+.inspection-fields dd { margin: .3rem 0; }
+.field-value, .opaque-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+  margin: 0;
+}
+.workflow-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.step-inspection, .child-inspect {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.step-inspection:hover, .child-inspect:hover, [aria-controls="workflow-drawer"][aria-expanded="true"] { color: var(--accent); }
+.child-navigation { display: flex; gap: 10px; padding: .3rem 1rem; overflow-wrap: anywhere; }
+.child-branch { margin: 0 0 .5rem 1rem; border-left: 2px solid var(--border); padding: .35rem .6rem; }
+.child-branch > summary { cursor: pointer; color: var(--text-dim); overflow-wrap: anywhere; }
+.child-content { margin-top: .5rem; }
+.tl-head, .tl-row { grid-template-columns: minmax(120px, 40%) minmax(50px, 1fr) 64px; }
+
+.version-control { display: inline-block; max-width: 100%; }
+.version-copy {
+  appearance: none;
+  background: var(--bg-elev2);
+  color: var(--text);
+  cursor: pointer;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.version-tooltip {
+  position: fixed;
+  z-index: 100;
+  display: block;
+  width: max-content;
+  max-width: min(30rem, calc(100vw - 24px));
+  max-height: min(22rem, calc(100vh - 24px));
+  overflow: auto;
+  padding: 12px 14px;
+  background: var(--bg-elev2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0008;
+  white-space: normal;
+  user-select: text;
+}
+.version-tooltip-label { display: block; color: var(--text-dim); font-size: 11px; margin-bottom: 5px; }
+.version-full { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.version-feedback { display: block; font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+.version-feedback:not(:empty) { margin-top: 8px; }
+.app-card .mini-table { table-layout: fixed; width: 100%; }
+.app-card .mini-table td { overflow-wrap: anywhere; }
+
+.inspection-drawer {
+  position: fixed;
+  z-index: 50;
+  inset: 56px 0 0 auto;
+  width: min(32rem, 100vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 35px #0006;
+}
+.drawer-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--border); }
+.drawer-head h2 { margin: 4px 0 0; font-size: 16px; overflow-wrap: anywhere; }
+.drawer-close { flex-shrink: 0; }
+.drawer-body { padding: 0 20px 24px; overflow: auto; overscroll-behavior: contain; }
+.inspection-kind { font-size: 11px; font-weight: 600; letter-spacing: .1em; color: var(--text-dim); }
+.inspection-title { font-size: 18px; margin: .25rem 0; overflow-wrap: anywhere; }
+.inspection-owner { overflow-wrap: anywhere; color: var(--text-dim); }
+.drawer-enter { transition: transform 140ms ease-out; }
+.drawer-offscreen { transform: translateX(100%); }
+.drawer-onscreen { transform: translateX(0); }
+@media (min-width: 1100px) {
+  #workflow-view.drawer-open { margin-right: 32rem; }
+}
+@media (max-width: 600px) {
+  .content { padding: 20px 12px; }
+  .status-row { flex-wrap: wrap; }
+  .inspection-drawer { inset: 0 0 0 auto; }
+  .drawer-head { padding: 16px; }
+  .drawer-body { padding: 0 16px 20px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter { transition: none; }
+}

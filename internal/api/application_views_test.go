@@ -182,10 +182,10 @@ func TestHomeApplicationCardLinksToEscapedLandingPath(t *testing.T) {
 	})
 
 	body := recorder.Body.String()
-	if got, want := applicationLink(t, body, "app-card"), "/apps/team%2Falpha%20&%20beta"; got != want {
+	if got, want := applicationLink(t, body, "app-name"), "/apps/team%2Falpha%20&%20beta"; got != want {
 		t.Fatalf("home application card href = %q, want landing %q", got, want)
 	}
-	if strings.Contains(applicationLink(t, body, "app-card"), "/workflows") {
+	if strings.Contains(applicationLink(t, body, "app-name"), "/workflows") {
 		t.Fatalf("home application card still skips the landing page: %s", body)
 	}
 }

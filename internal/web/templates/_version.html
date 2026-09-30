@@ -1,0 +1,16 @@
+{{define "version"}}
+{{if .}}
+<span class="version-control" data-version="{{.}}" x-data="versionControl" x-id="['version-tip']"
+      @mouseenter="show" @mouseleave="leave" @focusin="show" @focusout="$nextTick(() => leave())"
+      @keydown.escape.window="dismiss($event)" @resize.window="place" @scroll.window="place">
+  <button type="button" class="version-copy tag mono" aria-label="Copy application version"
+          x-ref="copy" :aria-describedby="$id('version-tip')" @click.prevent.stop="copy">{{truncate 12 .}}</button>
+  <span class="version-tooltip" role="tooltip" x-ref="tooltip" :id="$id('version-tip')"
+        x-cloak x-show="visible" :data-open="visible" :style="position">
+    <span class="version-tooltip-label">Application version</span>
+    <span class="version-full mono">{{.}}</span>
+    <span class="version-feedback" role="status" aria-live="polite" x-text="feedback"></span>
+  </span>
+</span>
+{{else}}<span class="subtle">Application version unavailable</span>{{end}}
+{{end}}

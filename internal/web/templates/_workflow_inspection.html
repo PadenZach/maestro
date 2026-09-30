@@ -1,0 +1,14 @@
+{{define "workflow_inspection"}}
+<div data-inspected-workflow="{{.WorkflowID}}" {{if .IsStep}}data-inspected-step="{{.StepID}}"{{else}}data-workflow-fields{{end}}>
+  <p class="inspection-kind">{{if .IsStep}}STEP {{.StepID}}{{else}}WORKFLOW{{end}}</p>
+  <h3 class="inspection-title">{{.Title}}</h3>
+  <p class="mono inspection-owner">{{.WorkflowID}}</p>
+  <a class="link" href="{{.FullURL}}">Open full workflow ↗</a>
+  {{template "inspection_fields" .Fields}}
+  {{if .IsStep}}
+  <p class="subtle">Step inputs, configuration and logs are unavailable in the executor step schema. Events, notifications and streams belong to the workflow.</p>
+  {{else}}
+  {{template "related_data" .Related}}
+  {{end}}
+</div>
+{{end}}

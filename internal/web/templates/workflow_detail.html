@@ -1,5 +1,7 @@
 {{define "content"}}
 {{$d := .Data}}
+<div id="workflow-view" tabindex="-1" x-data="workflowInspector" :class="{'drawer-open': drawerOpen}"
+     @keydown.escape.window="escape($event)" @htmx:after-settle.camel="refresh($event)">
 <div class="detail-head">
   <div>
     <h1 class="page-title">{{derefOr $d.Live.WF.WorkflowName $d.Live.WF.WorkflowUUID}}</h1>
@@ -28,41 +30,8 @@
   </div>
 </section>
 
-{{if or $d.Events $d.EventsError}}
-<section class="panel">
-  <h2>Events</h2>
-  {{if $d.EventsError}}<div class="flash err">{{$d.EventsError}}</div>{{else}}
-  <table class="data-table">
-    <thead><tr><th>Key</th><th>Value</th></tr></thead>
-    <tbody>{{range $d.Events}}<tr><td class="mono">{{.Key}}</td><td class="mono">{{truncate 200 .Value}}</td></tr>{{end}}</tbody>
-  </table>
-  {{end}}
-</section>
-{{end}}
 
-{{if or $d.Notifications $d.NotificationsError}}
-<section class="panel">
-  <h2>Notifications</h2>
-  {{if $d.NotificationsError}}<div class="flash err">{{$d.NotificationsError}}</div>{{else}}
-  <table class="data-table">
-    <thead><tr><th>Topic</th><th>Message</th><th>Consumed</th></tr></thead>
-    <tbody>{{range $d.Notifications}}<tr><td class="mono">{{derefOr .Topic "—"}}</td><td class="mono">{{truncate 160 .Message}}</td><td>{{if .Consumed}}yes{{else}}no{{end}}</td></tr>{{end}}</tbody>
-  </table>
-  {{end}}
-</section>
-{{end}}
-
-{{if or $d.Streams $d.StreamsError}}
-<section class="panel">
-  <h2>Streams</h2>
-  {{if $d.StreamsError}}<div class="flash err">{{$d.StreamsError}}</div>{{else}}
-  {{range $d.Streams}}
-  <div class="stream">
-    <div class="blob-head mono">{{.Key}}</div>
-    <ul class="stream-values">{{range .Values}}<li class="mono">{{truncate 200 .}}</li>{{end}}</ul>
-  </div>
-  {{end}}
-  {{end}}
-</section>
-{{end}}
+{{template "related_data" $d}}
+{{template "workflow_drawer" .}}
+</div>
 {{end}}

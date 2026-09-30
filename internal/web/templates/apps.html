@@ -8,9 +8,9 @@
 {{else}}
 <div class="card-grid">
   {{range $d.Apps}}
-  <a class="app-card" href="{{.ApplicationURL}}">
+  <article class="app-card">
     <div class="app-card-head">
-      <span class="app-name">{{.Name}}</span>
+      <a class="app-name" href="{{.ApplicationURL}}">{{.Name}}</a>
       <span class="badge {{if .Available}}ok{{else}}muted{{end}}">{{if .Available}}Available{{else}}Offline{{end}}</span>
     </div>
     <div class="app-card-meta">
@@ -18,12 +18,12 @@
     </div>
     {{if .Executors}}
     <table class="mini-table">
-      <thead><tr><th>Executor</th><th>Version</th><th>Language</th><th>Host</th></tr></thead>
+      <thead><tr><th>Executor</th><th>Application version</th><th>Language</th><th>Host</th></tr></thead>
       <tbody>
         {{range .Executors}}
         <tr>
           <td class="mono">{{truncate 12 .ExecutorID}}</td>
-          <td class="mono">{{truncate 12 .Version}}</td>
+          <td>{{template "version" .Version}}</td>
           <td>{{.Language}}</td>
           <td>{{.Hostname}}</td>
         </tr>
@@ -31,7 +31,7 @@
       </tbody>
     </table>
     {{end}}
-  </a>
+  </article>
   {{end}}
 </div>
 {{end}}

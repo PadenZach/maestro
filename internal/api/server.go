@@ -54,6 +54,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}", s.handleWorkflowDetail)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/live", s.handleWorkflowLive)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/timeline", s.handleWorkflowTimeline)
+	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/inspect", s.handleWorkflowInspection)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/blob", s.handleWorkflowBlob)
 	s.mux.HandleFunc("POST /apps/{app}/workflows/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /apps/{app}/workflows/{id}/resume", s.handleResume)

@@ -76,6 +76,31 @@ def gate_scheduled(when, context) -> str:
     return "scheduled"
 
 
+@DBOS.workflow()
+def gate_console_grandchild() -> str:
+    return gate_step("console-child")
+
+
+@DBOS.workflow()
+def gate_console_child() -> str:
+    return gate_console_grandchild()
+
+
+@DBOS.workflow()
+def gate_console_parent() -> str:
+    return gate_console_child()
+
+
+@DBOS.workflow()
+def gate_console_match(ordinal: int) -> int:
+    return ordinal
+
+
+@DBOS.workflow()
+def browser_noise(ordinal: int) -> int:
+    return ordinal
+
+
 def wire_digest(value) -> str:
     encoded = json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -387,6 +412,34 @@ try:
             digests[label] = hashlib.sha256(encoded).hexdigest()
         schedule_sha256[schedule_name] = digests
 
+    console = None
+    if os.environ.get("POSTGRES_GATE_CONSOLE") == "1":
+        parent = DBOS.start_workflow(gate_console_parent)
+        assert parent.get_result() == "gate-step-value"
+        parent_steps = dbos._sys_db.list_workflow_steps(parent.workflow_id)
+        child_id = next(step["child_workflow_id"] for step in parent_steps if step.get("child_workflow_id"))
+        child_steps = dbos._sys_db.list_workflow_steps(child_id)
+        grandchild_id = next(step["child_workflow_id"] for step in child_steps if step.get("child_workflow_id"))
+        # Older matches behind two candidate pages of newer nonmatches prove
+        # Console search is not restricted to a displayed/executor page.
+        matches = []
+        for ordinal in range(31):
+            match = DBOS.start_workflow(gate_console_match, ordinal)
+            assert match.get_result() == ordinal
+            matches.append(match.workflow_id)
+        for ordinal in range(52):
+            assert DBOS.start_workflow(browser_noise, ordinal).get_result() == ordinal
+        console = {
+            "app": config["name"],
+            "parent": parent.workflow_id,
+            "child": child_id,
+            "grandchild": grandchild_id,
+            "matches": matches,
+            "workflow": handle.workflow_id,
+            "input_sha256": hashlib.sha256(workflow_wire.Input.encode()).hexdigest(),
+            "output_sha256": hashlib.sha256(workflow_wire.Output.encode()).hexdigest(),
+        }
+
     # Only identifiers and digests of SDK-produced wire values cross this
     # temporary SDK-to-gate channel. No payload or credential is published.
     ready = {
@@ -411,6 +464,7 @@ try:
         "schedule_sha256": schedule_sha256,
         "workflow_aggregate_sha256": wire_digest(workflow_aggregate_wire),
         "step_aggregate_sha256": wire_digest(step_aggregate_wire),
+        "console": console,
     }
     ready_path = Path(os.environ["POSTGRES_GATE_READY"])
     pending_path = ready_path.with_suffix(".tmp")

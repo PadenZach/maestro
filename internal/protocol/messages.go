@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 )
@@ -42,6 +43,7 @@ type WorkflowsOutput struct {
 	ForkedFrom              *string `json:"ForkedFrom"`
 	WasForkedFrom           bool    `json:"WasForkedFrom"`
 	hasWasForkedFrom        bool
+	fields                  fieldPresence
 	ParentWorkflowID        *string `json:"ParentWorkflowID"`
 	DequeuedAt              *string `json:"DequeuedAt"`
 	DelayUntilEpochMS       *string `json:"DelayUntilEpochMS"`
@@ -57,6 +59,7 @@ type WorkflowsOutput struct {
 type WorkflowSteps struct {
 	FunctionID         int `json:"function_id"`
 	hasFunctionID      bool
+	fields             fieldPresence
 	FunctionName       string  `json:"function_name"`
 	Output             *string `json:"output"`
 	Error              *string `json:"error"`
@@ -65,26 +68,54 @@ type WorkflowSteps struct {
 	CompletedAtEpochMS *string `json:"completed_at_epoch_ms"`
 }
 
-// Presence is only needed by the strict local HTTP v2 mapper. Keep existing wire and
-// /api JSON fields and zero-value behavior unchanged for other consumers.
+// Presence supports strict HTTP mapping and faithful Console inspection without
+// changing wire or /api JSON output. Only key/null metadata is retained here.
+type fieldPresence map[string]bool
+
+func decodeFieldPresence(data []byte) (fieldPresence, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	fields := make(fieldPresence, len(raw))
+	for name, value := range raw {
+		fields[name] = !bytes.Equal(bytes.TrimSpace(value), []byte("null"))
+	}
+	return fields, nil
+}
+
+func (f fieldPresence) present(name string) bool {
+	if f == nil {
+		return true
+	} // Values constructed directly in Go have no wire omissions.
+	_, present := f[name]
+	return present
+}
+
+func (f fieldPresence) null(name string) bool {
+	nonnull, present := f[name]
+	return present && !nonnull
+}
+
 func (w *WorkflowsOutput) UnmarshalJSON(data []byte) error {
 	type fields WorkflowsOutput
 	var decoded fields
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var required struct {
-		WasForkedFrom *bool `json:"WasForkedFrom"`
-	}
-	if err := json.Unmarshal(data, &required); err != nil {
+	presence, err := decodeFieldPresence(data)
+	if err != nil {
 		return err
 	}
 	*w = WorkflowsOutput(decoded)
-	w.hasWasForkedFrom = required.WasForkedFrom != nil
+	w.fields = presence
+	w.hasWasForkedFrom = presence["WasForkedFrom"]
 	return nil
 }
 
-func (w WorkflowsOutput) HasWasForkedFrom() bool { return w.hasWasForkedFrom }
+func (w WorkflowsOutput) HasWasForkedFrom() bool        { return w.hasWasForkedFrom }
+func (w WorkflowsOutput) FieldPresent(name string) bool { return w.fields.present(name) }
+func (w WorkflowsOutput) FieldNull(name string) bool    { return w.fields.null(name) }
 
 func (s *WorkflowSteps) UnmarshalJSON(data []byte) error {
 	type fields WorkflowSteps
@@ -92,18 +123,19 @@ func (s *WorkflowSteps) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var required struct {
-		FunctionID *int `json:"function_id"`
-	}
-	if err := json.Unmarshal(data, &required); err != nil {
+	presence, err := decodeFieldPresence(data)
+	if err != nil {
 		return err
 	}
 	*s = WorkflowSteps(decoded)
-	s.hasFunctionID = required.FunctionID != nil
+	s.fields = presence
+	s.hasFunctionID = presence["function_id"]
 	return nil
 }
 
-func (s WorkflowSteps) HasFunctionID() bool { return s.hasFunctionID }
+func (s WorkflowSteps) HasFunctionID() bool           { return s.hasFunctionID }
+func (s WorkflowSteps) FieldPresent(name string) bool { return s.fields.present(name) }
+func (s WorkflowSteps) FieldNull(name string) bool    { return s.fields.null(name) }
 
 // QueueOutput is a queue's configuration. Mirrors protocol.py:QueueOutput.
 type QueueOutput struct {

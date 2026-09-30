@@ -133,6 +133,9 @@ func TestDataOnlyBaseResponseIsUnavailable(t *testing.T) {
 func TestHTMXRefusalEscapesHostileMessage(t *testing.T) {
 	ts, h := newTestServer(t)
 	dialFake(t, ts, "app", "testkey", "one", map[protocol.MessageType]respondFn{
+		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+			return map[string]any{"output": sampleWorkflow("wf-1", "SUCCESS")}
+		},
 		protocol.MsgListSteps: func(map[string]any) map[string]any {
 			return map[string]any{"error_message": `<script>alert("x")</script>&`}
 		},

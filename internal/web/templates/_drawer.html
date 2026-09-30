@@ -1,0 +1,21 @@
+{{define "workflow_drawer"}}
+<aside id="workflow-drawer" class="inspection-drawer" role="dialog" aria-label="Workflow inspection"
+       aria-modal="false" tabindex="-1" x-cloak x-show="drawerOpen"
+       x-transition:enter="drawer-enter" x-transition:enter-start="drawer-offscreen" x-transition:enter-end="drawer-onscreen">
+  <header class="drawer-head">
+    <div>
+      <span class="inspection-kind">INSPECTION</span>
+      <h2 x-text="selection?.label || 'Workflow details'"></h2>
+    </div>
+    <button type="button" class="btn drawer-close" aria-label="Close details" @click="close">✕</button>
+  </header>
+  <div class="drawer-body" :aria-busy="loading">
+    <p class="subtle" role="status" x-show="loading">Loading details…</p>
+    <div class="flash err" role="status" x-show="drawerError">
+      <span x-text="drawerError"></span>
+      <button type="button" class="btn" @click="loadInspection">Retry</button>
+    </div>
+    <div class="drawer-content" x-html="drawerHTML"></div>
+  </div>
+</aside>
+{{end}}

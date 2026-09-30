@@ -1,4 +1,4 @@
 {{define "blob"}}
 <div class="blob-head">{{.Title}}</div>
-{{if .Content}}<pre class="blob-body mono">{{.Content}}</pre>{{else}}<div class="subtle">—</div>{{end}}
+{{if .Missing}}<div class="subtle">unavailable (not returned)</div>{{else if .Available}}<pre class="blob-body mono">{{opaqueValue .Content}}</pre>{{else}}<div class="subtle">null</div>{{end}}
 {{end}}

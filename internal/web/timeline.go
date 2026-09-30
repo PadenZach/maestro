@@ -17,6 +17,14 @@ func funcMap() template.FuncMap {
 		"formatDuration": FormatDuration,
 		"statusClass":    statusClass,
 		"truncate":       truncate,
+		"workflowURL":    WorkflowURL,
+		"opaqueValue": func(value string) string {
+			if value == "" {
+				return `""`
+			}
+			return value
+		},
+		"nullableValue": func(value *string) string { return field("", value).Value },
 	}
 }
 
@@ -78,11 +86,13 @@ func FormatDuration(ms int64) string {
 // window [T0,T1], axis ticks, and one bar per step. Geometry is computed here
 // (not in templates) so it is unit-testable.
 type Timeline struct {
-	WorkflowID string
-	App        string
-	HasWindow  bool // false when no step has timing data; rows render bar-less
-	Ticks      []Tick
-	Rows       []StepRow
+	ChildStatus string
+	Branch      string
+	WorkflowID  string
+	App         string
+	HasWindow   bool // false when no step has timing data; rows render bar-less
+	Ticks       []Tick
+	Rows        []StepRow
 }
 
 // Tick is one axis label, positioned by percentage across the window.
@@ -93,6 +103,10 @@ type Tick struct {
 
 // StepRow is one step's bar within the timeline.
 type StepRow struct {
+	Key             string
+	StepID          string
+	ChildURL        string
+	ChildCycle      bool
 	FunctionID      int
 	Name            string
 	StatusClass     string // "ok" | "err" | "running" | "muted"
@@ -134,6 +148,7 @@ func BuildTimeline(app, workflowID string, steps []protocol.WorkflowSteps) Timel
 	for _, s := range steps {
 		row := StepRow{
 			FunctionID:      s.FunctionID,
+			StepID:          stepID(s),
 			Name:            s.FunctionName,
 			StatusClass:     "ok",
 			HasError:        s.Error != nil && *s.Error != "",
@@ -174,6 +189,7 @@ func BuildTimeline(app, workflowID string, steps []protocol.WorkflowSteps) Timel
 	if tl.HasWindow {
 		tl.Ticks = buildTicks(t1 - t0)
 	}
+	SetTimelineBranch(&tl, "", nil)
 	return tl
 }
 

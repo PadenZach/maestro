@@ -849,6 +849,10 @@ def run_case(
         POSTGRES_GATE_KEY=key,
         POSTGRES_GATE_METADATA_ONLY="1" if metadata_only else "0",
     )
+    if environment.get("POSTGRES_GATE_CONSOLE") == "1" and not metadata_only:
+        case_env["POSTGRES_GATE_CONSOLE"] = "1"
+    else:
+        case_env.pop("POSTGRES_GATE_CONSOLE", None)
     redactions = (
         key,
         database_url,
@@ -1242,7 +1246,10 @@ def run_case(
             workflow_path = (
                 prefix + "/workflows/" + urllib.parse.quote(workflow_id, safe="")
             )
-            status, workflows = request_json(base, prefix + "/workflows")
+            status, workflows = request_json(
+                base,
+                prefix + "/workflows?" + urllib.parse.urlencode({"id_prefix": workflow_id}),
+            )
             assert status == 200 and any(
                 row["WorkflowUUID"] == workflow_id for row in workflows
             ), "Postgres-backed workflow list"
@@ -1937,6 +1944,16 @@ def run_case(
                     hashlib.sha256(events[0]["value"].encode()).hexdigest()
                     == ready["event_value_sha256"]
                 ), "event opaque digest differs from SDK"
+                if case_env.get("POSTGRES_GATE_CONSOLE") == "1":
+                    console_ready = temp / "console.json"
+                    console_ready.write_text(json.dumps(ready["console"]))
+                    subprocess.run(
+                        ["node", str(ROOT / "dev/tests/console_browser.mjs"),
+                         "real", base, str(console_ready)],
+                        env=environment,
+                        timeout=90,
+                        check=True,
+                    )
         except BaseException as exc:
             primary_error = exc
             raise
@@ -1997,9 +2014,17 @@ def worker(
     bad_schedule_field,
     bad_related_field,
     bad_inspection_field,
+    console_browser=False,
 ):
     pg_bin, python = required_tool_paths(os.environ)
     environment = sanitized_environment(os.environ, temp)
+    if console_browser:
+        for key in ("PLAYWRIGHT_MODULE", "CHROMIUM_BIN"):
+            tool = Path(os.environ.get(key, ""))
+            if not tool.is_absolute() or not tool.is_file():
+                raise RuntimeError(f"{key} must name an existing absolute tool path")
+            environment[key] = str(tool)
+        environment["POSTGRES_GATE_CONSOLE"] = "1"
     validate_postgres_bin(pg_bin, environment)
     validate_sdk_python(python, environment)
 
@@ -2109,6 +2134,10 @@ def stat_mode(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--console-browser", action="store_true",
+        help="also verify Console traversal/search in an explicitly supplied browser",
+    )
+    parser.add_argument(
         "--probe-bad-expected-digest",
         action="store_true",
         help="negative-control: corrupt the expected workflow Input digest",
@@ -2152,6 +2181,7 @@ def main():
             args.probe_bad_schedule_field,
             args.probe_bad_related_field,
             args.probe_bad_inspection_field,
+            args.console_browser,
         )
         return
 
@@ -2167,6 +2197,12 @@ def main():
             POSTGRES18_BIN=str(pg_bin),
             DBOS_SDK_PYTHON=str(python),
         )
+        if args.console_browser:
+            for key in ("PLAYWRIGHT_MODULE", "CHROMIUM_BIN"):
+                tool = Path(os.environ.get(key, ""))
+                if not tool.is_absolute() or not tool.is_file():
+                    raise RuntimeError(f"{key} must name an existing absolute tool path")
+                worker_environment[key] = str(tool)
         command = [
             sys.executable,
             "-I",
@@ -2188,6 +2224,8 @@ def main():
             command.append("--probe-bad-related-field")
         if args.probe_bad_inspection_field:
             command.append("--probe-bad-inspection-field")
+        if args.console_browser:
+            command.append("--console-browser")
         run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
 
 
