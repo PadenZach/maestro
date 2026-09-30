@@ -2,15 +2,41 @@
 # Run `mise tasks` to list everything.
 
 [tools]
-go = "1.26"
+go = "1.26.8"
 
 [env]
 MAESTRO_PORT = "8090"
 MAESTRO_KEY = "dev-key"
 
 [tasks.build]
-description = "Build all packages"
+description = "Build and scan linux/amd64 + linux/arm64 OCI image with attached reports"
+run = "python3 -B dev/oci.py build"
+tools = { trivy = "0.74.0", oras = "1.3.4" }
+
+[tasks."build:go"]
+description = "Compile all Go packages"
 run = "go build ./..."
+
+[tasks.scan]
+description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
+run = "python3 -B dev/oci.py scan"
+tools = { trivy = "0.74.0" }
+
+[tasks."build:verify"]
+description = "Verify OCI platforms, labels, reports and digest attachments"
+run = "python3 -B dev/oci.py verify"
+
+[tasks."image:load"]
+description = "Load the verified native OCI image as maestro:local for Compose"
+run = "python3 -B dev/oci.py load"
+
+[tasks."image:test"]
+description = "Test the scanned native image's HTTP, shutdown and runtime restrictions"
+run = "python3 -B dev/tests/container/smoke.py"
+
+[tasks."test:tooling"]
+description = "Test build integrity and scan failure controls"
+run = "python3 -B -m unittest discover -s dev/tests/tooling -v"
 
 [tasks.test]
 description = "Run uncached tests with the race detector"
@@ -20,15 +46,26 @@ run = "go test -race -count=1 ./..."
 description = "Run go vet"
 run = "go vet ./..."
 
+[tasks."lint:go"]
+description = "Run pinned Staticcheck for Go correctness and style"
+run = "go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./..."
+
+[tasks."test:helpers"]
+description = "Test Python connection configuration and acceptance helpers"
+run = [
+  "python3 -B -I -S -m unittest discover -s dev/tests -p test_maestro_connection.py -v",
+  "python3 -B -I -S -m unittest discover -s dev/tests/acceptance -p 'test_*.py' -v",
+]
+
 [tasks.fmt]
 description = "Format maestro Go source (exclude optional reference checkouts)"
-run = "gofmt -w cmd internal"
+run = "gofmt -w cmd internal docs/reference dev/tests/container"
 
 [tasks."fmt:check"]
 description = "Check Go formatting without changing files"
 run = '''
 set -eu
-files="$(gofmt -l cmd internal)"
+files="$(gofmt -l cmd internal docs/reference dev/tests/container)"
 if [ -n "$files" ]; then
   printf 'Run mise run fmt for:\n%s\n' "$files"
   exit 1
@@ -44,8 +81,18 @@ description = "Run the unauthenticated dev server on loopback only"
 run = 'go run ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT" --key "$MAESTRO_KEY"'
 
 [tasks.check]
-description = "Check formatting, build, vet, and run uncached race tests"
-depends = ["fmt:check", "build", "vet", "test"]
+description = "Check formatting, build, vet, Staticcheck, race tests and Python helpers"
+depends = ["fmt:check", "build:go", "vet", "lint:go", "test", "test:tooling", "test:helpers"]
+
+[tasks."sdk:test"]
+description = "Test latest stable DBOS Python 2.x and 3.x (or DBOS_SDK_MAJOR)"
+run = "python3 -B dev/tests/python/latest.py"
+tools = { uv = "0.12.21" }
+
+[tasks."ci:lint"]
+description = "Validate GitHub Actions workflow syntax and expressions"
+run = "actionlint"
+tools = { actionlint = "1.7.12" }
 
 [tasks."python:gate"]
 description = "Opt-in released-Python 2.24.0/2.31.1/3.1.0 SQLite compatibility boundary"

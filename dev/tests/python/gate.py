@@ -65,9 +65,19 @@ def drain_redacted(pipe, log, key, value):
         log.flush()
 
 
-def run(version, binary, temp, bad_endpoint, private, bad_blob, dbosctl_bin=None):
+def run(
+    version,
+    binary,
+    temp,
+    bad_endpoint,
+    private,
+    bad_blob,
+    dbosctl_bin=None,
+    *,
+    python=None,
+):
     temp.mkdir(mode=0o700)
-    python = ROOT / "dev/tests/python" / version / ".venv/bin/python"
+    python = python or ROOT / "dev/tests/python" / version / ".venv/bin/python"
     if not python.is_file():
         raise RuntimeError(
             f"missing isolated {version} environment: run uv sync --locked in dev/tests/python/{version}"
@@ -307,7 +317,7 @@ def run(version, binary, temp, bad_endpoint, private, bad_blob, dbosctl_bin=None
                 assert status == 200 and scheduled["ScheduleName"] == "gate-schedule", (
                     "recent non-null ScheduleName"
                 )
-            if version != "3.1.0":
+            if version.startswith("2."):
                 assert app_proc.stdin is not None
                 ack = temp / "injection-ack"
                 app_proc.stdin.write("inject-events-error\n")

@@ -23,7 +23,7 @@ config = {
     "conductor_executor_metadata": {"gate": "released-python-reads"},
     "run_admin_server": False,
 }
-if version == "3.1.0":
+if version.startswith("3."):
     config["conductor_metadata_only_mode"] = os.environ.get("GATE_PRIVATE") == "1"
 dbos = DBOS(config=config)
 

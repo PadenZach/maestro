@@ -1,4 +1,6 @@
 /bin/
+/dist/
+__pycache__/
 .DS_Store
 
 # Optional local SDK reference; use pinned releases for compatibility gates.

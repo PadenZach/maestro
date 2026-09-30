@@ -1,0 +1,15 @@
+services:
+  maestro:
+    image: maestro:local
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default seccomp allowlist remains enabled; never use unconfined.
+    pids_limit: 128
+    ports:
+      - "127.0.0.1:8090:8090"
+    stop_grace_period: 15s
+    restart: unless-stopped
