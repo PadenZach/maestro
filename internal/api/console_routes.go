@@ -1,8 +1,9 @@
 package api
 
 import (
-	"github.com/zpaden/maestro/internal/web"
 	"net/http"
+
+	"github.com/zpaden/maestro/internal/web"
 )
 
 // consoleRoutes registers HTML pages and HTMX fragments independently of JSON documentation.
@@ -28,5 +29,4 @@ func (s *Server) consoleRoutes() {
 	s.mux.HandleFunc("GET /apps/{app}/queue", s.handleQueueDetailAlias)
 	s.mux.HandleFunc("GET /apps/{app}/schedules", s.handleSchedules)
 	s.mux.HandleFunc("GET /apps/{app}/schedule", s.handleScheduleDetail)
-
 }

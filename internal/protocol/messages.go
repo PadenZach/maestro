@@ -163,17 +163,8 @@ func (q *QueueOutput) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var required struct {
-		Name               *string  `json:"name"`
-		PriorityEnabled    *bool    `json:"priority_enabled"`
-		PartitionQueue     *bool    `json:"partition_queue"`
-		PollingIntervalSec *float64 `json:"polling_interval_sec"`
-	}
-	if err := json.Unmarshal(data, &required); err != nil {
-		return err
-	}
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(data, &present); err != nil {
+	present, err := decodeFieldPresence(data)
+	if err != nil {
 		return err
 	}
 	allFieldsPresent := true
@@ -190,7 +181,7 @@ func (q *QueueOutput) UnmarshalJSON(data []byte) error {
 		}
 	}
 	*q = QueueOutput(decoded)
-	q.hasRequiredFields = allFieldsPresent && required.Name != nil && required.PriorityEnabled != nil && required.PartitionQueue != nil && required.PollingIntervalSec != nil
+	q.hasRequiredFields = allFieldsPresent && present["name"] && present["priority_enabled"] && present["partition_queue"] && present["polling_interval_sec"]
 	return nil
 }
 

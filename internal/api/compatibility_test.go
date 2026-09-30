@@ -32,7 +32,7 @@ func TestSuccessFalseWithoutMessage(t *testing.T) {
 				dialFake(t, ts, "app", "testkey", "two", handlers)
 				waitFor(t, func() bool { return len(h.Executors()) == 2 })
 				code, html := postBody(t, ts.URL+"/apps/app/workflows/wf-1/"+string(command))
-				if code != 200 || !strings.Contains(html, strings.Title(string(command))+" failed:") || !strings.Contains(html, "unsuccessful") {
+				if code != 200 || !strings.Contains(html, map[protocol.MessageType]string{protocol.MsgCancel: "Cancel failed:", protocol.MsgResume: "Resume failed:"}[command]) || !strings.Contains(html, "unsuccessful") {
 					t.Fatalf("failed mutation shown as success: %d %s", code, html)
 				}
 				if got := attempts.Load(); got != 1 {

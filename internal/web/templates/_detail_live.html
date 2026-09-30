@@ -1,6 +1,6 @@
 {{define "detail_live"}}
 <div id="wf-live-inner"
-     {{if .IsRunning}}hx-get="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/live" hx-trigger="every 2s" hx-target="#wf-live" hx-swap="innerHTML"{{end}}>
+     {{if .IsRunning}}hx-get="{{workflowURL .App .WF.WorkflowUUID}}/live" hx-trigger="every 2s" hx-target="#wf-live" hx-swap="innerHTML"{{end}}>
 
   <div class="status-row">
     <span class="badge {{statusClass (deref .WF.Status)}}">{{derefOr .WF.Status "—"}}</span>
@@ -9,11 +9,11 @@
 
     <span class="actions">
       <button class="btn"
-              hx-post="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/cancel"
+              hx-post="{{workflowURL .App .WF.WorkflowUUID}}/cancel"
               hx-target="#wf-live" hx-swap="innerHTML"
               hx-confirm="Cancel this workflow?">Cancel</button>
       <button class="btn"
-              hx-post="/apps/{{.App}}/workflows/{{.WF.WorkflowUUID}}/resume"
+              hx-post="{{workflowURL .App .WF.WorkflowUUID}}/resume"
               hx-target="#wf-live" hx-swap="innerHTML">Resume</button>
     </span>
   </div>

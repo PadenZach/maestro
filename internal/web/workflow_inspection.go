@@ -110,8 +110,12 @@ func StepFields(s protocol.WorkflowSteps) []InspectionField {
 	}
 }
 
+func ApplicationURL(app string) string {
+	return "/apps/" + url.PathEscape(app)
+}
+
 func WorkflowURL(app, id string) string {
-	return "/apps/" + url.PathEscape(app) + "/workflows/" + url.PathEscape(id)
+	return ApplicationURL(app) + "/workflows/" + url.PathEscape(id)
 }
 
 // SetTimelineBranch assigns collision-free state keys using the entire invoking

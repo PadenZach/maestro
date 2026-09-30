@@ -211,19 +211,8 @@ func (s *ScheduleOutput) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
-	var required struct {
-		ScheduleID        *string `json:"schedule_id"`
-		ScheduleName      *string `json:"schedule_name"`
-		WorkflowName      *string `json:"workflow_name"`
-		Schedule          *string `json:"schedule"`
-		Status            *string `json:"status"`
-		AutomaticBackfill *bool   `json:"automatic_backfill"`
-	}
-	if err := json.Unmarshal(data, &required); err != nil {
-		return err
-	}
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(data, &present); err != nil {
+	present, err := decodeFieldPresence(data)
+	if err != nil {
 		return err
 	}
 	allFieldsPresent := true
@@ -239,12 +228,12 @@ func (s *ScheduleOutput) UnmarshalJSON(data []byte) error {
 	}
 	*s = ScheduleOutput(decoded)
 	s.hasRequiredFields = allFieldsPresent &&
-		required.ScheduleID != nil &&
-		required.ScheduleName != nil &&
-		required.WorkflowName != nil &&
-		required.Schedule != nil &&
-		required.Status != nil &&
-		required.AutomaticBackfill != nil
+		present["schedule_id"] &&
+		present["schedule_name"] &&
+		present["workflow_name"] &&
+		present["schedule"] &&
+		present["status"] &&
+		present["automatic_backfill"]
 	return nil
 }
 

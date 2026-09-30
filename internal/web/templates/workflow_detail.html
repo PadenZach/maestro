@@ -21,12 +21,12 @@
 <section class="panel">
   <h2>Input / Output</h2>
   <div class="blob-grid">
-    <div class="blob" hx-get="/apps/{{$d.Live.App}}/workflows/{{$d.Live.WF.WorkflowUUID}}/blob?kind=input"
+    <div class="blob" hx-get="{{workflowURL $d.Live.App $d.Live.WF.WorkflowUUID}}/blob?kind=input"
          hx-trigger="revealed" hx-swap="innerHTML">
       <div class="blob-head">Input</div>
       <div class="subtle">Loading…</div>
     </div>
-    <div class="blob" hx-get="/apps/{{$d.Live.App}}/workflows/{{$d.Live.WF.WorkflowUUID}}/blob?kind=output"
+    <div class="blob" hx-get="{{workflowURL $d.Live.App $d.Live.WF.WorkflowUUID}}/blob?kind=output"
          hx-trigger="revealed" hx-swap="innerHTML">
       <div class="blob-head">Output</div>
       <div class="subtle">Loading…</div>

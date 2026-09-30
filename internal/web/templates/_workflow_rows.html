@@ -15,9 +15,9 @@
       <tr><td colspan="6" class="empty-row">No workflows match these filters.</td></tr>
     {{end}}
     {{range .Workflows}}
-    <tr class="row-link" onclick="window.location='/apps/{{$.App}}/workflows/{{.WorkflowUUID}}'">
+    <tr class="row-link" data-workflow-url="{{workflowURL $.App .WorkflowUUID}}" onclick="window.location=this.dataset.workflowUrl">
       <td><span class="badge {{statusClass (deref .Status)}}">{{derefOr .Status "—"}}</span></td>
-      <td class="mono"><a href="/apps/{{$.App}}/workflows/{{.WorkflowUUID}}">{{truncate 24 .WorkflowUUID}}</a></td>
+      <td class="mono"><a href="{{workflowURL $.App .WorkflowUUID}}">{{truncate 24 .WorkflowUUID}}</a></td>
       <td>{{derefOr .WorkflowName "—"}}</td>
       <td>{{derefOr .QueueName "—"}}</td>
       <td class="mono subtle">{{derefOr .CreatedAt "—"}}</td>

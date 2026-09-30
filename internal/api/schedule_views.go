@@ -116,7 +116,7 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	filter, body, err := parseScheduleListQuery(r)
 	if err != nil {
-		s.renderScheduleError(w, http.StatusBadRequest, schedulesCrumbs(app), fmt.Errorf("invalid schedule list query: %w", err))
+		s.renderStatusError(w, http.StatusBadRequest, schedulesCrumbs(app), fmt.Errorf("invalid schedule list query: %w", err))
 		return
 	}
 
@@ -126,12 +126,12 @@ func (s *Server) handleSchedules(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if response.Output == nil {
-		s.renderScheduleError(w, http.StatusBadGateway, schedulesCrumbs(app), errors.New("schedule list unavailable"))
+		s.renderStatusError(w, http.StatusBadGateway, schedulesCrumbs(app), errors.New("schedule list unavailable"))
 		return
 	}
 	for _, schedule := range response.Output {
 		if err := validateScheduleForConsole(schedule); err != nil {
-			s.renderScheduleError(w, http.StatusBadGateway, schedulesCrumbs(app), err)
+			s.renderStatusError(w, http.StatusBadGateway, schedulesCrumbs(app), err)
 			return
 		}
 	}
@@ -153,7 +153,7 @@ func (s *Server) handleScheduleDetail(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	name, err := parseScheduleNameQuery(r)
 	if err != nil {
-		s.renderScheduleError(w, http.StatusBadRequest, schedulesCrumbs(app), err)
+		s.renderStatusError(w, http.StatusBadRequest, schedulesCrumbs(app), err)
 		return
 	}
 	crumbs := scheduleDetailCrumbs(app, name)
@@ -164,11 +164,11 @@ func (s *Server) handleScheduleDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if response.Output == nil {
-		s.renderScheduleError(w, http.StatusNotFound, crumbs, fmt.Errorf("schedule %q not found", name))
+		s.renderStatusError(w, http.StatusNotFound, crumbs, fmt.Errorf("schedule %q not found", name))
 		return
 	}
 	if err := validateScheduleForConsole(*response.Output); err != nil {
-		s.renderScheduleError(w, http.StatusBadGateway, crumbs, err)
+		s.renderStatusError(w, http.StatusBadGateway, crumbs, err)
 		return
 	}
 
@@ -178,17 +178,6 @@ func (s *Server) handleScheduleDetail(w http.ResponseWriter, r *http.Request) {
 		Status:        s.statusForPage(false),
 		Crumbs:        crumbs,
 		Data:          scheduleDetailData{App: app, Schedule: response.Output},
-	})
-}
-
-func (s *Server) renderScheduleError(w http.ResponseWriter, status int, crumbs []crumb, err error) {
-	w.WriteHeader(status)
-	s.web.Page(w, "error", page{
-		Title:         "Error",
-		AppsAvailable: s.appsAvailable(),
-		Status:        s.statusForPage(status >= http.StatusInternalServerError),
-		Crumbs:        crumbs,
-		Data:          errorData{Message: htmlErrorText(err)},
 	})
 }
 

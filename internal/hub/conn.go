@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -93,9 +94,7 @@ func (c *Conn) roundtrip(ctx context.Context, req protocol.Request) ([]byte, err
 	reqID := protocol.NewRequestID()
 	// The caller may reuse the same map concurrently; only the frame copy is ours.
 	frame := make(protocol.Request, len(req)+1)
-	for key, value := range req {
-		frame[key] = value
-	}
+	maps.Copy(frame, req)
 	frame["request_id"] = reqID
 	typ, _ := frame["type"].(string)
 	data, err := json.Marshal(frame)

@@ -18,6 +18,7 @@ func funcMap() template.FuncMap {
 		"statusClass":    statusClass,
 		"truncate":       truncate,
 		"workflowURL":    WorkflowURL,
+		"applicationURL": ApplicationURL,
 		"opaqueValue": func(value string) string {
 			if value == "" {
 				return `""`

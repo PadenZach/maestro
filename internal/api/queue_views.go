@@ -51,7 +51,7 @@ func (s *Server) handleQueueDetailAlias(w http.ResponseWriter, r *http.Request) 
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	names, hasName := query["name"]
 	if err != nil || len(query) != 1 || !hasName || len(names) != 1 || names[0] == "" {
-		s.renderQueueDetailError(w, http.StatusBadRequest, queuesCrumbs(app), fmt.Errorf("queue detail requires exactly one nonempty name query parameter"))
+		s.renderStatusError(w, http.StatusBadRequest, queuesCrumbs(app), fmt.Errorf("queue detail requires exactly one nonempty name query parameter"))
 		return
 	}
 	s.renderQueueDetail(w, r, app, names[0])
@@ -66,11 +66,11 @@ func (s *Server) renderQueueDetail(w http.ResponseWriter, r *http.Request, app, 
 		return
 	}
 	if resp.Output == nil {
-		s.renderQueueDetailError(w, http.StatusNotFound, crumbs, fmt.Errorf("queue %q not found", name))
+		s.renderStatusError(w, http.StatusNotFound, crumbs, fmt.Errorf("queue %q not found", name))
 		return
 	}
 	if !resp.Output.HasRequiredFields() {
-		s.renderQueueDetailError(w, http.StatusBadGateway, crumbs, fmt.Errorf("queue %q response missing required fields", name))
+		s.renderStatusError(w, http.StatusBadGateway, crumbs, fmt.Errorf("queue %q response missing required fields", name))
 		return
 	}
 
@@ -80,17 +80,6 @@ func (s *Server) renderQueueDetail(w http.ResponseWriter, r *http.Request, app, 
 		Status:        s.statusForPage(false),
 		Crumbs:        crumbs,
 		Data:          queueDetailData{App: app, Queue: resp.Output},
-	})
-}
-
-func (s *Server) renderQueueDetailError(w http.ResponseWriter, status int, crumbs []crumb, err error) {
-	w.WriteHeader(status)
-	s.web.Page(w, "error", page{
-		Title:         "Error",
-		AppsAvailable: s.appsAvailable(),
-		Status:        s.statusForPage(status >= http.StatusInternalServerError),
-		Crumbs:        crumbs,
-		Data:          errorData{Message: htmlErrorText(err)},
 	})
 }
 

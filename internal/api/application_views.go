@@ -2,9 +2,9 @@ package api
 
 import (
 	"net/http"
-	"net/url"
 
 	"github.com/zpaden/maestro/internal/hub"
+	"github.com/zpaden/maestro/internal/web"
 )
 
 type applicationData struct {
@@ -30,7 +30,7 @@ func (a appSummary) ApplicationURL() string {
 }
 
 func applicationPath(app string) string {
-	return "/apps/" + url.PathEscape(app)
+	return web.ApplicationURL(app)
 }
 
 // handleApplication renders navigation for a single application without

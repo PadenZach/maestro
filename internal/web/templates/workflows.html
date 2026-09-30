@@ -6,7 +6,7 @@
 </div>
 
 <div class="filter-bar">
-  <form hx-get="/apps/{{$d.App}}/workflows/rows"
+  <form hx-get="{{applicationURL $d.App}}/workflows/rows"
         hx-target="#wf-rows"
         hx-trigger="input delay:350ms, change, submit"
         hx-indicator="#wf-loading">

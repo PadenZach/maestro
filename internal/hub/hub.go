@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -24,7 +25,7 @@ var ErrAppUnavailable = errors.New("conductor: application unavailable")
 var ErrHubClosed = errors.New("conductor: hub closed")
 
 // ErrUnsupportedCapability indicates that no connected peer is reviewed for
-// every requested additive field/command; silently widening a read is unsafe.
+// the requested mutation. Reads do not use SDK-version capability gates.
 var ErrUnsupportedCapability = errors.New("conductor: unsupported executor capability")
 
 // Hub indexes live executor connections by application name.
@@ -86,7 +87,7 @@ func New(log *slog.Logger, requestTimeout time.Duration) *Hub {
 // Accept upgrades an executor's HTTP request to a WebSocket, runs the
 // EXECUTOR_INFO handshake, registers the executor, and then blocks until the
 // connection closes (keeping the HTTP handler alive for the socket's lifetime).
-// The caller must have already authenticated the conductor key.
+// Authentication is delegated to the external gateway; the SDK URL key is ignored.
 func (h *Hub) Accept(w http.ResponseWriter, r *http.Request, app string) error {
 	h.mu.Lock()
 	if h.stopping {
@@ -249,10 +250,7 @@ func (h *Hub) Request(ctx context.Context, app string, req protocol.Request) ([]
 	// strings but must be normalized for response correlation and read retries.
 	// Never modify the caller's map (it may be shared by concurrent requests).
 	if typ, ok := req["type"].(protocol.MessageType); ok {
-		copy := make(protocol.Request, len(req))
-		for key, value := range req {
-			copy[key] = value
-		}
+		copy := maps.Clone(req)
 		copy["type"] = string(typ)
 		req = copy
 	}

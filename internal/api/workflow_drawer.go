@@ -61,7 +61,7 @@ func (s *Server) handleWorkflowInspection(w http.ResponseWriter, r *http.Request
 				return
 			}
 		}
-		partialError(w, fmt.Errorf("Step %d in workflow %s is unavailable after refresh.", stepID, id))
+		partialMessage(w, fmt.Sprintf("Step %d in workflow %s is unavailable after refresh.", stepID, id))
 		return
 	}
 	data.Fields = web.WorkflowFields(wf)

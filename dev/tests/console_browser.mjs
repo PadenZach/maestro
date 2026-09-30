@@ -141,9 +141,14 @@ async function compactTimeline(page, base) {
   await row('gantt-child').getByRole('button', { name: 'Expand child workflow gantt-grandchild', exact: true }).press('Enter');
   await expect(row('gantt-grandchild')).toBeVisible();
   await expect(page.locator('.tl-head'), 'one shared time axis').toHaveCount(1);
-  const contentBox = await page.locator('main').boundingBox();
-  const footerBox = await page.getByRole('contentinfo').boundingBox();
-  assert(footerBox.y >= contentBox.y + contentBox.height - 1, 'footer follows long content without covering it');
+  // Read both rectangles in one layout snapshot: focusing a newly expanded
+  // branch can scroll between separate browser round-trips.
+  const footerFollowsContent = await page.evaluate(() => {
+    const content = document.querySelector('main').getBoundingClientRect();
+    const footer = document.querySelector('footer').getBoundingClientRect();
+    return footer.top >= content.bottom - 1;
+  });
+  assert(footerFollowsContent, 'footer follows long content without covering it');
   const rootTrack = await rootRow.locator('.tl-track').boundingBox();
   const rootDuration = await rootRow.locator('.tl-dur-col').boundingBox();
   for (const [id, offset, width] of [['gantt-child', .25, .25], ['gantt-grandchild', .375, .0625]]) {

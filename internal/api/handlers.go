@@ -159,11 +159,15 @@ func (s *Server) renderErrorPage(w http.ResponseWriter, crumbs []crumb, err erro
 	if errors.Is(err, hub.ErrAppUnavailable) {
 		status = http.StatusServiceUnavailable
 	}
+	s.renderStatusError(w, status, crumbs, err)
+}
+
+func (s *Server) renderStatusError(w http.ResponseWriter, status int, crumbs []crumb, err error) {
 	w.WriteHeader(status)
 	s.web.Page(w, "error", page{
 		Title:         "Error",
 		AppsAvailable: s.appsAvailable(),
-		Status:        s.statusForPage(true),
+		Status:        s.statusForPage(status >= http.StatusInternalServerError),
 		Crumbs:        crumbs,
 		Data:          errorData{Message: htmlErrorText(err)},
 	})
@@ -173,8 +177,12 @@ type errorData struct{ Message string }
 
 // partialError writes a small inline error fragment for HTMX swaps.
 func partialError(w http.ResponseWriter, err error) {
+	partialMessage(w, htmlErrorText(err))
+}
+
+func partialMessage(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(htmlErrorText(err)))
+	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(message))
 }
 
 // --- HTML handlers ----------------------------------------------------------
@@ -265,27 +273,27 @@ func (s *Server) fetchRows(ctx context.Context, app string, f filterState, offse
 	if err != nil {
 		return workflowRows{}, err
 	}
-	hasNext := len(wfs) > limit
+	return paginateRows(app, f, offset, wfs), nil
+}
+
+// paginateRows shares range labels and navigation between exact SDK queries
+// and Console substring search. Callers supply at most one extra result.
+func paginateRows(app string, f filterState, offset int, workflows []protocol.WorkflowsOutput) workflowRows {
+	hasNext := len(workflows) > defaultPageSize
 	if hasNext {
-		wfs = wfs[:limit]
+		workflows = workflows[:defaultPageSize]
 	}
-	rows := workflowRows{App: app, Workflows: wfs}
-	if len(wfs) == 0 {
-		rows.RangeLabel = "No results"
-	} else {
-		rows.RangeLabel = fmt.Sprintf("%d–%d", offset+1, offset+len(wfs))
+	rows := workflowRows{App: app, Workflows: workflows, RangeLabel: "No results"}
+	if len(workflows) > 0 {
+		rows.RangeLabel = fmt.Sprintf("%d–%d", offset+1, offset+len(workflows))
 	}
 	if offset > 0 {
-		prev := offset - limit
-		if prev < 0 {
-			prev = 0
-		}
-		rows.PrevURL = rowsURL(app, f, prev)
+		rows.PrevURL = rowsURL(app, f, max(0, offset-defaultPageSize))
 	}
 	if hasNext {
-		rows.NextURL = rowsURL(app, f, offset+limit)
+		rows.NextURL = rowsURL(app, f, offset+defaultPageSize)
 	}
-	return rows, nil
+	return rows
 }
 
 func (s *Server) handleWorkflowDetail(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +385,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 	ancestors := query["ancestor"]
 	for _, ancestor := range ancestors {
 		if ancestor == id {
-			partialError(w, fmt.Errorf("Workflow relationship cycle at %q", id))
+			partialMessage(w, fmt.Sprintf("Workflow relationship cycle at %q", id))
 			return
 		}
 	}
@@ -417,8 +425,6 @@ func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {
 	data := blobData{Title: "Output"}
 	if loadInput {
 		data.Title = "Input"
-	}
-	if loadInput {
 		data.Content = deref(wf.Input)
 		data.Available = wf.Input != nil
 		data.Missing = !wf.FieldPresent("Input")
@@ -500,7 +506,7 @@ func rowsURL(app string, f filterState, offset int) string {
 		v.Set("queue", f.Queue)
 	}
 	v.Set("offset", strconv.Itoa(offset))
-	return "/apps/" + url.PathEscape(app) + "/workflows/rows?" + v.Encode()
+	return applicationPath(app) + "/workflows/rows?" + v.Encode()
 }
 
 func isRunning(status *string) bool {
@@ -539,18 +545,18 @@ func htmlEscape(s string) string {
 }
 
 func workflowsCrumbs(app string) []crumb {
-	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: "/apps/" + app + "/workflows"}, {Label: "Workflows"}}
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app) + "/workflows"}, {Label: "Workflows"}}
 }
 
 func detailCrumbs(app, id string) []crumb {
 	return []crumb{
 		{Label: "Home", Href: "/"},
-		{Label: app, Href: "/apps/" + app + "/workflows"},
-		{Label: "Workflows", Href: "/apps/" + app + "/workflows"},
+		{Label: app, Href: applicationPath(app) + "/workflows"},
+		{Label: "Workflows", Href: applicationPath(app) + "/workflows"},
 		{Label: id},
 	}
 }
 
 func queuesCrumbs(app string) []crumb {
-	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: "/apps/" + app + "/workflows"}, {Label: "Queues"}}
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app) + "/workflows"}, {Label: "Queues"}}
 }

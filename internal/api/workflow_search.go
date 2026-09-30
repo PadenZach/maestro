@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -65,23 +64,5 @@ func (s *Server) fetchConsoleRows(ctx context.Context, app string, f filterState
 		}
 		candidateOffset += len(candidates)
 	}
-	hasNext := len(matches) > defaultPageSize
-	if hasNext {
-		matches = matches[:defaultPageSize]
-	}
-	rows := workflowRows{App: app, Workflows: matches, RangeLabel: "No results"}
-	if len(matches) > 0 {
-		rows.RangeLabel = fmt.Sprintf("%d–%d", offset+1, offset+len(matches))
-	}
-	if offset > 0 {
-		prev := offset - defaultPageSize
-		if prev < 0 {
-			prev = 0
-		}
-		rows.PrevURL = rowsURL(app, f, prev)
-	}
-	if hasNext {
-		rows.NextURL = rowsURL(app, f, offset+defaultPageSize)
-	}
-	return rows, nil
+	return paginateRows(app, f, offset, matches), nil
 }
