@@ -4,7 +4,11 @@
      @keydown.escape.window="escape($event)" @htmx:after-settle.camel="refresh($event)">
 <div class="detail-head">
   <div>
-    <h1 class="page-title">{{derefOr $d.Live.WF.WorkflowName $d.Live.WF.WorkflowUUID}}</h1>
+    <h1 class="page-title"><button type="button" class="workflow-inspect" title="Inspect workflow"
+        data-selection-key="workflow:{{$d.Live.App}}:{{$d.Live.WF.WorkflowUUID}}"
+        data-inspect-url="{{workflowURL $d.Live.App $d.Live.WF.WorkflowUUID}}/inspect" data-inspect-label="Workflow {{$d.Live.WF.WorkflowUUID}}"
+        aria-controls="workflow-drawer" :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey"
+        @click="inspect($el)">{{derefOr $d.Live.WF.WorkflowName $d.Live.WF.WorkflowUUID}}</button></h1>
     <div class="detail-sub mono">{{$d.Live.WF.WorkflowUUID}}</div>
     <div class="detail-sub subtle">{{derefOr $d.Live.WF.CreatedAt ""}}</div>
   </div>

@@ -348,6 +348,23 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
 	id := r.PathValue("id")
+	query := r.URL.Query()
+	starts, hasStart := query["window_start"]
+	ends, hasEnd := query["window_end"]
+	var start, end int64
+	if hasStart || hasEnd {
+		if len(starts) != 1 || len(ends) != 1 {
+			partialError(w, fmt.Errorf("invalid timeline window"))
+			return
+		}
+		var startErr, endErr error
+		start, startErr = strconv.ParseInt(starts[0], 10, 64)
+		end, endErr = strconv.ParseInt(ends[0], 10, 64)
+		if startErr != nil || endErr != nil || start < 0 || end < start {
+			partialError(w, fmt.Errorf("invalid timeline window"))
+			return
+		}
+	}
 	wf, err := s.readWorkflow(r.Context(), app, id, false, false)
 	if err != nil {
 		partialError(w, err)
@@ -357,7 +374,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 		partialError(w, fmt.Errorf("child workflow %q not found", id))
 		return
 	}
-	ancestors := r.URL.Query()["ancestor"]
+	ancestors := query["ancestor"]
 	for _, ancestor := range ancestors {
 		if ancestor == id {
 			partialError(w, fmt.Errorf("Workflow relationship cycle at %q", id))
@@ -369,10 +386,15 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 		partialError(w, err)
 		return
 	}
-	tl := web.BuildTimeline(app, id, steps)
+	var tl web.Timeline
+	if hasStart {
+		tl = web.BuildTimelineInWindow(app, id, steps, start, end)
+	} else {
+		tl = web.BuildTimeline(app, id, steps)
+	}
 	tl.ChildStatus = deref(wf.Status)
-	web.SetTimelineBranch(&tl, r.URL.Query().Get("branch"), ancestors)
-	s.web.Partial(w, "timeline", tl)
+	web.SetTimelineBranch(&tl, query.Get("branch"), ancestors)
+	s.web.Partial(w, "timeline_rows", tl)
 }
 
 func (s *Server) handleWorkflowBlob(w http.ResponseWriter, r *http.Request) {

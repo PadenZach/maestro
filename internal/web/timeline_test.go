@@ -55,6 +55,37 @@ func TestBuildTimeline_NoTiming(t *testing.T) {
 	}
 }
 
+func TestBuildTimelineSharedWindowBounds(t *testing.T) {
+	steps := []protocol.WorkflowSteps{
+		{FunctionID: 1, StartedAtEpochMS: sp("500"), CompletedAtEpochMS: sp("2000")},
+		{FunctionID: 2, StartedAtEpochMS: sp("4000"), CompletedAtEpochMS: sp("6000")},
+		{FunctionID: 3, StartedAtEpochMS: sp("7000"), CompletedAtEpochMS: sp("8000")},
+		{FunctionID: 4, StartedAtEpochMS: sp("2000")},
+	}
+	tl := BuildTimelineInWindow("app", "child", steps, 1000, 5000)
+	if !approx(tl.Rows[0].LeftPct, 0) || !approx(tl.Rows[0].WidthPct, 25) || tl.Rows[0].Duration != "1s" {
+		t.Fatalf("left clipping changed real duration or geometry: %+v", tl.Rows[0])
+	}
+	if !approx(tl.Rows[1].LeftPct, 75) || !approx(tl.Rows[1].WidthPct, 25) || tl.Rows[1].Duration != "2s" {
+		t.Fatalf("right clipping changed real duration or geometry: %+v", tl.Rows[1])
+	}
+	if tl.Rows[2].HasBar {
+		t.Fatal("out-of-window child must not be drawn at a false time")
+	}
+	if !approx(tl.Rows[3].LeftPct, 25) || !approx(tl.Rows[3].WidthPct, 75) || tl.Rows[3].StatusClass != "running" {
+		t.Fatalf("running child must use shared right edge: %+v", tl.Rows[3])
+	}
+	unknown := BuildTimelineInWindow("app", "child", steps, 0, 0)
+	if unknown.HasWindow {
+		t.Fatal("unknown root window must not become a child-local axis")
+	}
+	for _, row := range unknown.Rows {
+		if row.HasBar {
+			t.Fatal("a shared unknown window must keep descendants bar-less")
+		}
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	cases := map[int64]string{1: "1ms", 522: "522ms", 35000: "35s", 182000: "3m 2s"}
 	for ms, want := range cases {

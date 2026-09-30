@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} · maestro</title>
   <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/footer.css">
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/console.js" defer></script>
   <script src="/static/alpine.min.js" defer></script>
@@ -25,5 +26,10 @@
   <main class="content">
     {{template "content" .}}
   </main>
+  <footer class="site-footer">
+    <span>Maestro <span class="mono" aria-label="Maestro version">{{maestroVersion}}</span></span>
+    <a href="https://opensource.org/license/mit">MIT License</a>
+    <span>Not affiliated with DBOS, Inc. in any way.</span>
+  </footer>
 </body>
 </html>{{end}}

@@ -134,15 +134,24 @@ document.addEventListener("alpine:init", () => {
   // Nested under workflowInspector, so every branch uses its ancestry key in
   // that persistent owner's expanded map. Alpine initializes swapped branches.
   Alpine.data("workflowBranch", () => ({
+    branchRoot: null,
     branchHTML: "",
     branchLoading: false,
     branchError: "",
     branchController: null,
+    init() {
+      this.branchRoot = this.$el;
+      // Parent x-html initializes this component inside its render effect.
+      // Defer state reads so nested folding cannot retrigger that render.
+      this.$nextTick(() => {
+        if (this.branchRoot.isConnected && this.branchOpen) this.loadBranch();
+      });
+    },
+    get branchOpen() { return this.expanded[this.branchRoot.dataset.branchKey] || false; },
     toggle() {
-      if (!this.$el.isConnected) return;
-      const open = this.$el.open;
-      this.expanded[this.$el.dataset.branchKey] = open;
-      if (open) this.loadBranch();
+      if (!this.branchRoot.isConnected) return;
+      this.expanded[this.branchRoot.dataset.branchKey] = !this.branchOpen;
+      if (this.branchOpen) this.loadBranch();
     },
     async loadBranch() {
       if (this.branchLoading) return;
@@ -151,14 +160,14 @@ document.addEventListener("alpine:init", () => {
       this.branchLoading = true;
       this.branchError = "";
       try {
-        const response = await fetch(this.$el.dataset.childUrl, {
+        const response = await fetch(this.branchRoot.dataset.childUrl, {
           signal: branchController.signal, headers: { "HX-Request": "true" },
         });
         if (!response.ok) throw new Error("Child read failed");
         const branchHTML = await response.text();
-        if (this.$el.isConnected) this.branchHTML = branchHTML;
+        if (this.branchRoot.isConnected) this.branchHTML = branchHTML;
       } catch (branchError) {
-        if (branchError.name !== "AbortError" && this.$el.isConnected) {
+        if (branchError.name !== "AbortError" && this.branchRoot.isConnected) {
           this.branchError = "Child workflow unavailable. Collapse and expand to retry.";
         }
       } finally {

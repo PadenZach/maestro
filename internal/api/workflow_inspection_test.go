@@ -160,3 +160,30 @@ func TestFailedChildWithoutStepsRetainsFailureStatus(t *testing.T) {
 		t.Fatalf("failed empty child appears ordinary empty: %s", body)
 	}
 }
+
+func TestChildTimelineUsesParentWindowAndCompactRows(t *testing.T) {
+	ts, h := newTestServer(t)
+	dialFake(t, ts, "myapp", "testkey", "exec-1", map[protocol.MessageType]respondFn{
+		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+			return map[string]any{"output": sampleWorkflow("child", "SUCCESS")}
+		},
+		protocol.MsgListSteps: func(map[string]any) map[string]any {
+			return map[string]any{"output": []protocol.WorkflowSteps{{FunctionID: 1, FunctionName: "child_step", ChildWorkflowID: strp("grandchild"), StartedAtEpochMS: strp("2000"), CompletedAtEpochMS: strp("3000")}}}
+		},
+	})
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	_, body := getBody(t, ts.URL+"/apps/myapp/workflows/child/timeline?ancestor=root&branch=left&window_start=1000&window_end=5000")
+	if !strings.Contains(body, "left:25.00%;width:25.00%") {
+		t.Errorf("child must use parent [1000,5000] window: %s", body)
+	}
+	for _, unwanted := range []string{`class="tl-head"`, `class="child-navigation"`, "Child steps ·"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("nested rows contain redundant layout %q", unwanted)
+		}
+	}
+	for _, want := range []string{"window_start=1000", "window_end=5000", `class="tl-fold"`, `aria-label="Expand child workflow grandchild"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("compact child rows missing %q", want)
+		}
+	}
+}

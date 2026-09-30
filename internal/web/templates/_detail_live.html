@@ -21,13 +21,6 @@
   {{if .Flash}}<div class="flash err">{{.Flash}}</div>{{end}}
 
   {{if .WF.ParentWorkflowID}}<p><a href="{{workflowURL .App (deref .WF.ParentWorkflowID)}}">Parent workflow {{deref .WF.ParentWorkflowID}}</a></p>{{end}}
-  <div class="workflow-tools">
-    <button type="button" class="btn workflow-inspect" data-selection-key="workflow:{{.App}}:{{.WF.WorkflowUUID}}"
-            data-inspect-url="{{workflowURL .App .WF.WorkflowUUID}}/inspect" data-inspect-label="Workflow {{.WF.WorkflowUUID}}"
-            aria-controls="workflow-drawer" :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey"
-            @click="inspect($el)">Workflow details <span aria-hidden="true">↗</span></button>
-    <span class="subtle">Select a step to inspect it. Expand branches to follow child workflows.</span>
-  </div>
   {{template "timeline" .Timeline}}
 </div>
 {{end}}

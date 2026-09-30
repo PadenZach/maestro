@@ -50,6 +50,7 @@ type Renderer struct {
 // a programming error (templates are compiled into the binary).
 func New() (*Renderer, error) {
 	funcs := funcMap()
+	funcs["maestroVersion"] = maestroVersion
 	r := &Renderer{pages: make(map[string]*template.Template)}
 	for name, file := range pageFiles {
 		t, err := template.New(name).Funcs(funcs).ParseFS(embedded, "templates/layout.html", partialGlob, file)

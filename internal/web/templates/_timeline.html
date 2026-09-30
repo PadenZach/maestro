@@ -1,60 +1,68 @@
 {{define "timeline"}}
-<div class="timeline" data-timeline-workflow="{{.WorkflowID}}" data-timeline-branch="{{.Branch}}">
-  {{if .ChildStatus}}<p class="badge {{statusClass .ChildStatus}}" data-child-status="{{.ChildStatus}}">Child workflow status: {{.ChildStatus}}</p>{{end}}
+<div class="timeline">
   <div class="tl-head">
     <div class="tl-step-col">Step</div>
     <div class="tl-axis">
-      {{if .HasWindow}}
-      {{range .Ticks}}
+      {{if .HasWindow}}{{range .Ticks}}
       <span class="tl-tick" style="left:{{printf "%.2f" .LeftPct}}%">{{.Label}}</span>
-      {{end}}
-      {{end}}
+      {{end}}{{end}}
     </div>
     <div class="tl-dur-col">Duration</div>
   </div>
+  {{template "timeline_rows" .}}
+</div>
+{{end}}
 
-  {{if not .Rows}}
-  <div class="empty-row">No steps recorded for this workflow.</div>
+{{define "timeline_rows"}}
+<div class="timeline-rows" data-timeline-workflow="{{.WorkflowID}}" data-timeline-branch="{{.Branch}}">
+  {{if and .ChildStatus (ne .ChildStatus "SUCCESS")}}
+  <div class="tl-notice" role="status"><span class="badge {{statusClass .ChildStatus}}" data-child-status="{{.ChildStatus}}">Child workflow status: {{.ChildStatus}}</span></div>
   {{end}}
-
+  {{if not .Rows}}<div class="tl-notice subtle">No steps recorded for this workflow.</div>{{end}}
   {{range .Rows}}
-  <div class="tl-row">
-    <div class="tl-step-col">
-      <span class="tl-status tl-{{.StatusClass}}">{{if eq .StatusClass "err"}}✕{{else if eq .StatusClass "running"}}◷{{else}}✓{{end}}</span>
-      <button type="button" class="tl-name step-inspection" data-step-workflow="{{$.WorkflowID}}" data-step-id="{{.StepID}}"
-              data-selection-key="step:{{.Key}}" data-inspect-url="{{workflowURL $.App $.WorkflowID}}/inspect?step={{.StepID}}"
-              data-inspect-label="Step {{.StepID}} · {{.Name}}" aria-controls="workflow-drawer"
-              :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey" @click="inspect($el)">
-        {{.Name}} <span class="subtle">[{{.StepID}}]</span>
-      </button>
+  <div class="timeline-step{{if .ChildWorkflowID}} child-branch{{end}}"
+       {{if .ChildWorkflowID}}data-branch-key="{{.Key}}" data-child-workflow="{{.ChildWorkflowID}}" data-child-url="{{.ChildURL}}" x-data="workflowBranch"{{end}}>
+    <div class="tl-row" style="--depth:{{$.Depth}}">
+      <div class="tl-step-col">
+        {{if and .ChildWorkflowID (not .ChildCycle)}}
+        <button type="button" class="tl-fold" aria-label="Expand child workflow {{.ChildWorkflowID}}"
+                :aria-label="(branchOpen ? 'Collapse' : 'Expand') + ' child workflow ' + branchRoot.dataset.childWorkflow"
+                aria-expanded="false" :aria-expanded="branchOpen" aria-controls="children-{{.Key}}" @click="toggle">
+          <span aria-hidden="true" :class="{'open': branchOpen}">▸</span>
+        </button>
+        {{else}}<span class="tl-fold-space" aria-hidden="true"></span>{{end}}
+        <span class="tl-status tl-{{.StatusClass}}">{{if eq .StatusClass "err"}}✕{{else if eq .StatusClass "running"}}◷{{else}}✓{{end}}</span>
+        <button type="button" class="tl-name step-inspection" data-step-workflow="{{$.WorkflowID}}" data-step-id="{{.StepID}}"
+                data-selection-key="step:{{.Key}}" data-inspect-url="{{workflowURL $.App $.WorkflowID}}/inspect?step={{.StepID}}"
+                data-inspect-label="Step {{.StepID}} · {{.Name}}" aria-controls="workflow-drawer"
+                :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey" @click="inspect($el)">
+          {{.Name}} <span class="subtle">[{{.StepID}}]</span>
+        </button>
+        {{if .ChildWorkflowID}}
+        <button type="button" class="child-inspect" aria-label="Inspect child workflow {{.ChildWorkflowID}}" title="Inspect child workflow {{.ChildWorkflowID}}"
+                data-selection-key="workflow:{{.Key}}" data-inspect-url="{{workflowURL $.App .ChildWorkflowID}}/inspect"
+                data-inspect-label="Child workflow {{.ChildWorkflowID}}" aria-controls="workflow-drawer"
+                :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey" @click="inspect($el)">wf</button>
+        <a class="child-link subtle" href="{{workflowURL $.App .ChildWorkflowID}}" aria-label="Open child workflow {{.ChildWorkflowID}}" title="Open child workflow {{.ChildWorkflowID}}">↗</a>
+        {{end}}
+      </div>
+      <div class="tl-track">
+        {{if .HasBar}}<span class="tl-bar tl-{{.StatusClass}}" style="left:{{printf "%.2f" .LeftPct}}%;width:{{printf "%.2f" .WidthPct}}%"></span>{{end}}
+      </div>
+      <div class="tl-dur-col mono subtle">{{.Duration}}</div>
     </div>
-    <div class="tl-track">
-      {{if .HasBar}}
-      <span class="tl-bar tl-{{.StatusClass}}" style="left:{{printf "%.2f" .LeftPct}}%;width:{{printf "%.2f" .WidthPct}}%"></span>
+    {{if .ChildWorkflowID}}
+      {{if .ChildCycle}}
+      <div class="tl-notice err">Workflow relationship cycle at {{.ChildWorkflowID}}. This branch stops here.</div>
+      {{else}}
+      <div class="child-content" id="children-{{.Key}}" x-cloak x-show="branchOpen">
+        <p class="tl-notice subtle" x-show="branchLoading" role="status">Loading child steps…</p>
+        <p class="tl-notice err" x-show="branchError" x-text="branchError" role="status"></p>
+        <div x-html="branchHTML"></div>
+      </div>
       {{end}}
-    </div>
-    <div class="tl-dur-col mono subtle">{{.Duration}}</div>
+    {{end}}
   </div>
-
-  {{if .ChildWorkflowID}}
-  <div class="child-navigation">
-    <button type="button" class="child-inspect" data-selection-key="workflow:{{.Key}}" data-inspect-url="{{workflowURL $.App .ChildWorkflowID}}/inspect"
-            data-inspect-label="Child workflow {{.ChildWorkflowID}}" aria-controls="workflow-drawer"
-            :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey" @click="inspect($el)">Child workflow {{.ChildWorkflowID}}</button>
-    <a class="subtle" href="{{workflowURL $.App .ChildWorkflowID}}" aria-label="Open child workflow {{.ChildWorkflowID}}">↗</a>
-  </div>
-  {{if .ChildCycle}}
-  <div class="flash err">Workflow relationship cycle at {{.ChildWorkflowID}}. This branch stops here.</div>
-  {{else}}
-  <details class="child-branch tl-children" data-branch-key="{{.Key}}" data-child-url="{{.ChildURL}}"
-           x-data="workflowBranch" :open="expanded[$el.dataset.branchKey] || false" @toggle="toggle">
-    <summary aria-expanded="false" :aria-expanded="expanded[$el.parentElement.dataset.branchKey] || false">Child steps · {{.ChildWorkflowID}}</summary>
-    <p class="subtle" x-cloak x-show="branchLoading" role="status">Loading child steps…</p>
-    <p class="flash err" x-cloak x-show="branchError" x-text="branchError" role="status"></p>
-    <div class="child-content" x-html="branchHTML"></div>
-  </details>
-  {{end}}
-  {{end}}
   {{end}}
 </div>
 {{end}}

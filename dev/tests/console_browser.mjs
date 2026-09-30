@@ -83,6 +83,12 @@ async function fakeExecutor(base, app, state) {
           : id === 'grandchild' ? [step('root', 'cycle_call')]
           : [];
         if (id === 'root' && state.omitRootStep) steps = steps.filter(row => row.function_id !== 1);
+        if (id === 'gantt') steps = [
+          { ...step('gantt-child', 'start_child'), started_at_epoch_ms: '1000', completed_at_epoch_ms: '5000' },
+          { ...step(null, 'finish', 2), started_at_epoch_ms: '4500', completed_at_epoch_ms: '5000' },
+        ];
+        if (id === 'gantt-child') steps = [{ ...step('gantt-grandchild', 'child_step'), started_at_epoch_ms: '2000', completed_at_epoch_ms: '3000' }];
+        if (id === 'gantt-grandchild') steps = [{ ...step(null, 'grandchild_step'), started_at_epoch_ms: '2500', completed_at_epoch_ms: '2750' }];
         response = { output: steps };
         break;
       }
@@ -116,6 +122,51 @@ async function fakeExecutor(base, app, state) {
 
 const drawer = page => page.getByRole('dialog', { name: 'Workflow inspection' });
 
+async function compactTimeline(page, base) {
+  await page.goto(`${base}/apps/browser/workflows/gantt`);
+  await expect(page.locator('.workflow-tools'), 'workflow instruction strip removed').toHaveCount(0);
+  await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(40, 44, 52)');
+  await expect(page.locator('.tl-bar').first(), 'successful steps retain One Dark green').toHaveCSS('background-color', 'rgb(152, 195, 121)');
+  const row = id => page.locator(`.step-inspection[data-step-workflow="${id}"]`).first().locator('xpath=ancestor::*[contains(concat(" ",normalize-space(@class)," ")," tl-row ")][1]');
+  const rootRow = row('gantt');
+  const fold = rootRow.getByRole('button', { name: 'Expand child workflow gantt-child', exact: true });
+  await expect(fold, 'fold control belongs to the invoking step row').toBeVisible();
+  await expect(row('gantt-child')).toHaveCount(0);
+  const first = await rootRow.boundingBox();
+  const second = await page.locator('.step-inspection[data-step-workflow="gantt"][data-step-id="2"]').boundingBox();
+  assert(second.y - first.y <= 40, 'collapsed child occupies only its invoking row');
+  await fold.press('Enter');
+  await expect(row('gantt-child')).toBeVisible();
+  await expect(drawer(page), 'folding must not open inspection').not.toBeVisible();
+  await row('gantt-child').getByRole('button', { name: 'Expand child workflow gantt-grandchild', exact: true }).press('Enter');
+  await expect(row('gantt-grandchild')).toBeVisible();
+  await expect(page.locator('.tl-head'), 'one shared time axis').toHaveCount(1);
+  const contentBox = await page.locator('main').boundingBox();
+  const footerBox = await page.getByRole('contentinfo').boundingBox();
+  assert(footerBox.y >= contentBox.y + contentBox.height - 1, 'footer follows long content without covering it');
+  const rootTrack = await rootRow.locator('.tl-track').boundingBox();
+  const rootDuration = await rootRow.locator('.tl-dur-col').boundingBox();
+  for (const [id, offset, width] of [['gantt-child', .25, .25], ['gantt-grandchild', .375, .0625]]) {
+    const track = await row(id).locator('.tl-track').boundingBox();
+    const bar = await row(id).locator('.tl-bar').boundingBox();
+    const duration = await row(id).locator('.tl-dur-col').boundingBox();
+    assert(Math.abs(track.x - rootTrack.x) < 1 && Math.abs(track.width - rootTrack.width) < 1, `${id} track aligns with root`);
+    assert(Math.abs(bar.x - (rootTrack.x + rootTrack.width * offset)) < 1 && Math.abs(bar.width - rootTrack.width * width) < 1, `${id} uses root time scale`);
+    assert(Math.abs(duration.x + duration.width - rootDuration.x - rootDuration.width) < 1, `${id} duration stays aligned`);
+  }
+  if (process.env.CONSOLE_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.CONSOLE_SCREENSHOT_DIR, 'compact-gantt.png') });
+  await row('gantt-child').locator('.step-inspection').press('Enter');
+  await expectSelection(page, 'gantt-child', 1);
+  await expect(row('gantt-grandchild'), 'inspection preserves folding').toBeVisible();
+  await page.keyboard.press('Escape');
+  await rootRow.getByRole('button', { name: 'Collapse child workflow gantt-child', exact: true }).press('Enter');
+  await expect(row('gantt-child')).not.toBeVisible();
+  await page.locator('h1 .workflow-inspect').press('Enter');
+  await expectSelection(page, 'gantt');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('h1 .workflow-inspect')).toBeFocused();
+}
+
 async function expectSelection(page, workflow, stepID) {
   const body = drawer(page).locator('[data-inspected-workflow]');
   await expect(drawer(page)).toBeVisible();
@@ -125,25 +176,25 @@ async function expectSelection(page, workflow, stepID) {
 
 async function inspectTree(page, base, app, root, child, grandchild) {
   await page.goto(`${base}/apps/${app}/workflows/${root}`);
-  const branches = page.locator('details.child-branch');
-  await branches.first().locator(':scope > summary').press('Enter');
+  const branches = page.locator('.child-branch');
+  await branches.first().locator(':scope > .tl-row .tl-fold').press('Enter');
   const childStep = page.locator(`.step-inspection[data-step-workflow="${child}"]`).first();
   await expect(childStep).toBeVisible();
   await childStep.press('Enter');
   await expectSelection(page, child, await childStep.getAttribute('data-step-id'));
   await expect(drawer(page).getByRole('button', { name: 'Close details' })).toBeFocused();
-  const nested = branches.first().locator('.child-content details.child-branch').first();
-  await nested.locator(':scope > summary').press('Enter');
+  const nested = branches.first().locator('.child-content .child-branch').first();
+  await nested.locator(':scope > .tl-row .tl-fold').press('Enter');
   await expect(page.locator(`.step-inspection[data-step-workflow="${grandchild}"]`).first()).toBeVisible();
-  await branches.first().locator(':scope > summary').press('Enter');
+  await branches.first().locator(':scope > .tl-row .tl-fold').press('Enter');
   await expect(childStep).not.toBeVisible();
-  await branches.first().locator(':scope > summary').press('Enter');
+  await branches.first().locator(':scope > .tl-row .tl-fold').press('Enter');
   await expect(childStep).toBeVisible();
   return childStep;
 }
 
 async function navigateParent(page, base, app, root, child) {
-  await page.locator(`.child-navigation a[href="/apps/${app}/workflows/${child}"]`).first().click();
+  await page.locator(`.child-link[href="/apps/${app}/workflows/${child}"]`).first().click();
   await expect(page).toHaveURL(`${base}/apps/${app}/workflows/${child}`);
   await page.getByRole('link', { name: `Parent workflow ${root}`, exact: true }).click();
   await expect(page).toHaveURL(`${base}/apps/${app}/workflows/${root}`);
@@ -194,26 +245,26 @@ async function refreshDuringInspection(page, base) {
 async function independentBranches(page, base) {
   await page.goto(`${base}/apps/browser/workflows/shared`);
   const rootStep = page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="1"]');
-  const branches = page.locator('#wf-live > div > .timeline > .child-branch');
+  const branches = page.locator('#wf-live > div > .timeline > .timeline-rows > .child-branch');
   await rootStep.press('Enter');
   await refreshDetails(page);
   await expectSelection(page, 'shared', 1);
-  await expect(branches.first(), 'inspection does not open its child branch').not.toHaveAttribute('open', '');
+  await expect(branches.first().locator(':scope > .tl-row .tl-fold'), 'inspection does not open its child branch').toHaveAttribute('aria-expanded', 'false');
   await page.keyboard.press('Escape');
   await expect(rootStep).toBeFocused();
-  await branches.first().locator(':scope > summary').press('Enter');
+  await branches.first().locator(':scope > .tl-row .tl-fold').press('Enter');
   const firstChild = branches.first().locator('.step-inspection[data-step-workflow="child"]').first();
   await firstChild.press('Enter');
-  await branches.nth(1).locator(':scope > summary').press('Enter');
+  await branches.nth(1).locator(':scope > .tl-row .tl-fold').press('Enter');
   const otherChild = branches.nth(1).locator('.step-inspection[data-step-workflow="child"]').first();
   await expect(otherChild).toBeVisible();
   await expect(otherChild).toHaveAttribute('aria-expanded', 'false');
   await expectSelection(page, 'child', 1);
-  await branches.nth(1).locator(':scope > summary').press('Enter');
+  await branches.nth(1).locator(':scope > .tl-row .tl-fold').press('Enter');
   await refreshDetails(page);
   await expect(firstChild).toHaveAttribute('aria-expanded', 'true');
   await expect(rootStep).toHaveAttribute('aria-expanded', 'false');
-  await expect(branches.nth(1), 'sibling folding stays independent').not.toHaveAttribute('open', '');
+  await expect(branches.nth(1).locator(':scope > .tl-row .tl-fold'), 'sibling folding stays independent').toHaveAttribute('aria-expanded', 'false');
   await page.keyboard.press('Escape');
   await expect(firstChild, 'focus returns to the same ancestry after refresh').toBeFocused();
 }
@@ -232,7 +283,7 @@ async function delayedInspection(page, base) {
       return original.call(this, input, options);
     };
   });
-  await page.locator('details.child-branch').first().locator(':scope > summary').press('Enter');
+  await page.locator('.child-branch').first().locator(':scope > .tl-row .tl-fold').press('Enter');
   const childStep = page.locator('.step-inspection[data-step-workflow="child"]').first();
   let held;
   let delivered;
@@ -323,12 +374,23 @@ try {
     let peer = await fakeExecutor(base, 'browser', state);
     await fakeExecutor(base, 'other', state);
 
+    await compactTimeline(page, base);
+
     await page.goto(`${base}/apps/browser/workflows/shared`);
     await page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="1"]').click();
     await expect(page.getByRole('dialog', { name: 'Workflow inspection' }), 'step details open a flyout').toBeVisible();
     await page.keyboard.press('Escape');
 
     await page.goto(base);
+    await expect(page.locator('.status-green'), 'online retains One Dark green').toHaveCSS('background-color', 'rgb(152, 195, 121)');
+    const footer = page.getByRole('contentinfo');
+    await expect(footer).toContainText('Maestro');
+    await expect(footer.getByRole('link', { name: 'MIT License' })).toHaveAttribute('href', 'https://opensource.org/license/mit');
+    await expect(footer).toContainText('Not affiliated with DBOS, Inc. in any way.');
+    await expect(footer.locator('[aria-label="Maestro version"]')).toHaveText(/\S+/);
+    const footerBox = await footer.boundingBox();
+    assert(Math.abs(footerBox.y + footerBox.height - page.viewportSize().height) < 1, 'footer sits at bottom of short page');
+    if (process.env.CONSOLE_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.CONSOLE_SCREENSHOT_DIR, 'footer.png') });
     const control = page.locator('.version-control').first();
     const copy = control.getByRole('button', { name: 'Copy application version', exact: true });
     await expect(copy, 'full application version copy control').toBeVisible();
@@ -377,6 +439,7 @@ try {
     await refreshDuringInspection(page, base);
     await clipboardLifecycle(page, base, errors);
     const childStep = await inspectTree(page, base, 'browser', 'root', 'child', 'grandchild');
+    await expect(page.locator('#wf-live > div > .status-row > .badge.running'), 'running retains One Dark blue').toHaveCSS('color', 'rgb(97, 175, 239)');
     await page.locator('.child-inspect').first().click();
     await expectSelection(page, 'child');
     await expect(drawer(page).locator('[data-field="workflowId"] .field-value')).toHaveText('child');
@@ -415,12 +478,13 @@ try {
     await expect(childStep).toBeVisible();
     await expectSelection(page, 'child', 1);
     await expect(page.locator('body')).toContainText('Workflow relationship cycle');
-    await page.locator('details.child-branch').filter({ hasText: 'Child steps · missing' }).first().locator(':scope > summary').press('Enter');
+    await page.locator('.child-branch[data-child-workflow="missing"]').first().locator(':scope > .tl-row .tl-fold').press('Enter');
     await expect(page.locator('body')).toContainText(/not found|missing workflow/i);
-    await page.locator('details.child-branch').filter({ hasText: 'Child steps · empty' }).first().locator(':scope > summary').press('Enter');
+    await page.locator('.child-branch[data-child-workflow="empty"]').first().locator(':scope > .tl-row .tl-fold').press('Enter');
     await expect(page.locator('body')).toContainText('No steps recorded for this workflow.');
-    await page.locator('details.child-branch').filter({ hasText: 'Child steps · failed' }).first().locator(':scope > summary').press('Enter');
+    await page.locator('.child-branch[data-child-workflow="failed"]').first().locator(':scope > .tl-row .tl-fold').press('Enter');
     await expect(page.locator('[data-child-status="ERROR"]')).toHaveText('Child workflow status: ERROR');
+    await expect(page.locator('[data-child-status="ERROR"]'), 'failed child retains One Dark red').toHaveCSS('color', 'rgb(224, 108, 117)');
     await page.locator('.step-inspection[data-step-workflow="root"][data-step-id="1"]').press('Enter');
     state.omitRootStep = true;
     await expect(drawer(page)).toContainText('Step 1 in workflow root is unavailable after refresh.');
@@ -429,6 +493,7 @@ try {
     state.omitRootStep = false;
     state.refuse = true;
     await page.reload();
+    await expect(page.locator('.status-amber'), 'read failure retains One Dark warning yellow').toHaveCSS('background-color', 'rgb(229, 192, 123)');
     await page.locator('.workflow-inspect').click();
     await expect(drawer(page)).toContainText('fixture stream refusal');
     await expect(drawer(page)).toContainText(/no events/i);

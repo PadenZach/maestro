@@ -87,6 +87,9 @@ func FormatDuration(ms int64) string {
 // (not in templates) so it is unit-testable.
 type Timeline struct {
 	ChildStatus string
+	Depth       int
+	StartMS     int64
+	EndMS       int64
 	Branch      string
 	WorkflowID  string
 	App         string
@@ -125,6 +128,16 @@ const minBarPct = 0.6 // keep instantaneous steps visible
 // the span from the earliest step start to the latest step completion; steps
 // still running have no completion and render as muted bars to "now"-less ends.
 func BuildTimeline(app, workflowID string, steps []protocol.WorkflowSteps) Timeline {
+	return buildTimeline(app, workflowID, steps, nil)
+}
+
+// BuildTimelineInWindow aligns a lazy child fragment with its root's axis.
+// An empty window stays empty, rather than inventing a child-local time scale.
+func BuildTimelineInWindow(app, workflowID string, steps []protocol.WorkflowSteps, start, end int64) Timeline {
+	return buildTimeline(app, workflowID, steps, &[2]int64{start, end})
+}
+
+func buildTimeline(app, workflowID string, steps []protocol.WorkflowSteps, window *[2]int64) Timeline {
 	tl := Timeline{App: app, WorkflowID: workflowID}
 
 	var t0, t1 int64
@@ -142,6 +155,10 @@ func BuildTimeline(app, workflowID string, steps []protocol.WorkflowSteps) Timel
 			t1 = end
 		}
 	}
+	if window != nil {
+		t0, t1, haveT0 = window[0], window[1], window[1] > window[0]
+	}
+	tl.StartMS, tl.EndMS = t0, t1
 	tl.HasWindow = haveT0 && t1 > t0
 	span := float64(t1 - t0)
 
@@ -168,19 +185,17 @@ func BuildTimeline(app, workflowID string, steps []protocol.WorkflowSteps) Timel
 		}
 
 		if tl.HasWindow && hasStart {
-			row.HasBar = true
-			row.LeftPct = clampPct(float64(start-t0) / span * 100)
 			barEnd := end
 			if !hasEnd {
 				barEnd = t1
 			}
-			w := float64(barEnd-start) / span * 100
-			if w < minBarPct {
-				w = minBarPct
-			}
-			row.WidthPct = clampPct(w)
-			if row.LeftPct+row.WidthPct > 100 {
-				row.WidthPct = 100 - row.LeftPct
+			// Only draw the intersection with the shared axis. The duration
+			// column retains the full measured duration, including clipped time.
+			if start <= t1 && barEnd >= t0 {
+				row.HasBar = true
+				row.LeftPct = clampPct(float64(start-t0) / span * 100)
+				right := clampPct(float64(barEnd-t0) / span * 100)
+				row.WidthPct = min(100-row.LeftPct, max(minBarPct, right-row.LeftPct))
 			}
 		}
 		tl.Rows = append(tl.Rows, row)

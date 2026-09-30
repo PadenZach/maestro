@@ -70,7 +70,10 @@ func TestUIBrandingAndApplicationStatusLifecycle(t *testing.T) {
 		}
 	}
 	for _, old := range []string{"DBOS", "Conductor", "0 Available"} {
-		if strings.Contains(body, old) {
+		// The requested non-affiliation footer names DBOS; application branding
+		// and the empty-state copy above it must still identify maestro only.
+		mainPage, _, _ := strings.Cut(body, `<footer class="site-footer">`)
+		if strings.Contains(mainPage, old) {
 			t.Fatalf("home retains old branding %q: %s", old, body)
 		}
 	}

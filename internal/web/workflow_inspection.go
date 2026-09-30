@@ -117,6 +117,7 @@ func WorkflowURL(app, id string) string {
 // SetTimelineBranch assigns collision-free state keys using the entire invoking
 // ancestry, not just the step number. Ancestors come only from reported IDs.
 func SetTimelineBranch(tl *Timeline, branch string, ancestors []string) {
+	tl.Depth = len(ancestors)
 	ancestors = append(append([]string(nil), ancestors...), tl.WorkflowID)
 	if branch == "" {
 		branch = identity(tl.App, tl.WorkflowID)
@@ -136,7 +137,11 @@ func SetTimelineBranch(tl *Timeline, branch string, ancestors []string) {
 				row.ChildCycle = true
 			}
 		}
-		query := url.Values{"branch": {row.Key}, "ancestor": ancestors}
+		query := url.Values{
+			"branch": {row.Key}, "ancestor": ancestors,
+			"window_start": {strconv.FormatInt(tl.StartMS, 10)},
+			"window_end":   {strconv.FormatInt(tl.EndMS, 10)},
+		}
 		row.ChildURL = WorkflowURL(tl.App, row.ChildWorkflowID) + "/timeline?" + query.Encode()
 	}
 }
