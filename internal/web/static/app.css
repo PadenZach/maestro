@@ -449,6 +449,16 @@ button:focus-visible, summary:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
+.aggregate-tabs { display: flex; gap: 1.5rem; margin: 1rem 0; flex-wrap: wrap; }
+.aggregate-tabs [aria-current="page"] { font-weight: 700; text-decoration: underline; }
+.aggregate-form details { margin-bottom: 1rem; }
+.aggregate-form summary { cursor: pointer; font-weight: 600; }
+.aggregate-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 1rem; margin: 1rem 0; }
+.aggregate-controls label { display: flex; flex-direction: column; gap: .4rem; }
+.aggregate-controls input, .aggregate-controls select, .aggregate-controls textarea { width: 100%; padding: .5rem; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+.aggregate-controls textarea { resize: vertical; }
+.aggregate-results { overflow-x: auto; }
+.aggregate-results pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .inspection-fields { margin: 1rem 0; }
 .inspection-fields > div { border-bottom: 1px solid var(--border); padding: .7rem 0; }
 .inspection-fields dt { font-weight: 600; overflow-wrap: anywhere; }

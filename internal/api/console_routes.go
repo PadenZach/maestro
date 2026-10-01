@@ -17,6 +17,7 @@ func (s *Server) consoleRoutes() {
 	s.mux.HandleFunc("GET /apps/{app}/{$}", s.handleApplication)
 	s.mux.HandleFunc("GET /apps/{app}/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/rows", s.handleWorkflowRows)
+	s.mux.HandleFunc("GET /apps/{app}/aggregates/{kind}", s.handleAggregates)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}", s.handleWorkflowDetail)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/live", s.handleWorkflowLive)
 	s.mux.HandleFunc("GET /apps/{app}/workflows/{id}/timeline", s.handleWorkflowTimeline)

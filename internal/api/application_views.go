@@ -25,6 +25,10 @@ func (d applicationData) SchedulesURL() string {
 	return applicationPath(d.App) + "/schedules"
 }
 
+func (d applicationData) AggregatesURL() string {
+	return applicationPath(d.App) + "/aggregates/workflows"
+}
+
 func (a appSummary) ApplicationURL() string {
 	return applicationPath(a.Name)
 }

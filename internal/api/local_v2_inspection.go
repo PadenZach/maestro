@@ -459,24 +459,10 @@ func (s *Server) localV2WorkflowAggregates(w http.ResponseWriter, r *http.Reques
 		localV2Problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	raw, err := s.hub.Request(r.Context(), r.PathValue("app"), protocol.GetWorkflowAggregatesRequest(body))
+	out, err := s.readAggregates(r.Context(), r.PathValue("app"), protocol.GetWorkflowAggregatesRequest(body), localV2WorkflowAggregateRecord)
 	if err != nil {
 		localV2Failure(w, err)
 		return
-	}
-	records, err := localV2InspectionPayload(raw)
-	if err != nil {
-		localV2Failure(w, err)
-		return
-	}
-	out := make([]map[string]any, 0, len(records))
-	for _, record := range records {
-		mapped, err := localV2WorkflowAggregateRecord(record)
-		if err != nil {
-			localV2Failure(w, err)
-			return
-		}
-		out = append(out, mapped)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -491,24 +477,10 @@ func (s *Server) localV2StepAggregates(w http.ResponseWriter, r *http.Request) {
 		localV2Problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	raw, err := s.hub.Request(r.Context(), r.PathValue("app"), protocol.GetStepAggregatesRequest(body))
+	out, err := s.readAggregates(r.Context(), r.PathValue("app"), protocol.GetStepAggregatesRequest(body), localV2StepAggregateRecord)
 	if err != nil {
 		localV2Failure(w, err)
 		return
-	}
-	records, err := localV2InspectionPayload(raw)
-	if err != nil {
-		localV2Failure(w, err)
-		return
-	}
-	out := make([]map[string]any, 0, len(records))
-	for _, record := range records {
-		mapped, err := localV2StepAggregateRecord(record)
-		if err != nil {
-			localV2Failure(w, err)
-			return
-		}
-		out = append(out, mapped)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

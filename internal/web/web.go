@@ -29,6 +29,7 @@ var embedded embed.FS
 var pageFiles = map[string]string{
 	"apps":            "templates/apps.html",
 	"application":     "templates/application.html",
+	"aggregates":      "templates/aggregates.html",
 	"workflows":       "templates/workflows.html",
 	"workflow_detail": "templates/workflow_detail.html",
 	"queues":          "templates/queues.html",

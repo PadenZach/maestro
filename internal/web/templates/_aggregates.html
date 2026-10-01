@@ -1,0 +1,51 @@
+{{define "aggregate_view"}}
+<div id="aggregate-view"
+     hx-on::before-swap="if (event.detail.xhr.status >= 400) { event.detail.shouldSwap = true; event.detail.isError = false; }">
+  <div class="page-head">
+    <h1 class="page-title">{{.App}}</h1><span class="subtle">{{.Title}}</span>
+  </div>
+  <nav class="aggregate-tabs" aria-label="Aggregate type">
+    <a href="{{applicationURL .App}}/aggregates/workflows" {{if eq .Kind "workflows"}}aria-current="page"{{end}}>Workflow aggregates</a>
+    <a href="{{applicationURL .App}}/aggregates/steps" {{if eq .Kind "steps"}}aria-current="page"{{end}}>Step aggregates</a>
+  </nav>
+  <form class="aggregate-form panel" method="get" action="{{.URL}}"
+        hx-get="{{.URL}}" hx-target="#aggregate-view" hx-swap="outerHTML" hx-push-url="true">
+    {{range .Sections}}
+    <details {{if .Expanded}}open{{end}}>
+      <summary>{{.Label}}</summary>
+      {{if eq .Label "Filters"}}<p class="subtle">Leave a filter blank to omit it. Lists accept one exact value per line. Dates include a timezone, for example 2026-01-01T00:00:00Z.</p>{{end}}
+      <div class="aggregate-controls">
+      {{range .Controls}}
+        <label for="aggregate-{{.Name}}">{{.Label}}
+          {{if eq .Kind "boolean"}}
+          <select id="aggregate-{{.Name}}" name="{{.Name}}">
+            <option value="" {{if eq .Value ""}}selected{{end}}>Default</option>
+            <option value="true" {{if eq .Value "true"}}selected{{end}}>Yes</option>
+            <option value="false" {{if eq .Value "false"}}selected{{end}}>No</option>
+          </select>
+          {{else if or (eq .Kind "list") (eq .Kind "object")}}
+          <textarea id="aggregate-{{.Name}}" name="{{.Name}}" rows="2" spellcheck="false">{{.Value}}</textarea>
+          {{else}}
+          <input id="aggregate-{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if eq .Kind "integer"}}type="number" step="1"{{else}}type="text" placeholder="2026-01-01T00:00:00Z"{{end}}>
+          {{end}}
+        </label>
+      {{end}}
+      </div>
+    </details>
+    {{end}}
+    {{/* POST aggregate RPCs are reads; the Console form itself remains GET. */}}
+    <button type="submit" class="btn">Apply</button>
+    <a href="{{.URL}}">Reset</a>
+  </form>
+  {{if .Error}}
+  <div class="empty" role="alert">{{.Error}}</div>
+  {{else if .Rows}}
+  <div class="aggregate-results" aria-live="polite">
+    <table><thead><tr><th>Group</th>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
+    <tbody>{{range .Rows}}<tr><td><pre>{{.Group}}</pre></td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table>
+  </div>
+  {{else}}
+  <div class="empty" role="status">No matching aggregates</div>
+  {{end}}
+</div>
+{{end}}
