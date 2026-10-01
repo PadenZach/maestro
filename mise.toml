@@ -1,88 +1,61 @@
-# maestro — dev toolchain + task runner (https://mise.jdx.dev)
-# Run `mise tasks` to list everything.
+# Run `mise tasks` to list tasks.
 
 [tools]
 go = "1.26.8"
 
 [env]
 MAESTRO_PORT = "8090"
-MAESTRO_KEY = "dev-key"
 
-[tasks.build]
-description = "Build and scan linux/amd64 + linux/arm64 OCI image with attached reports"
-run = "python3 -B dev/oci.py build"
-tools = { trivy = "0.74.0", oras = "1.3.4" }
-
-[tasks."build:go"]
-description = "Compile all Go packages"
-run = "go build ./..."
-
-[tasks.scan]
-description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
-run = "python3 -B dev/oci.py scan"
-tools = { trivy = "0.74.0" }
-
-[tasks."build:verify"]
-description = "Verify OCI platforms, labels, reports and digest attachments"
-run = "python3 -B dev/oci.py verify"
-
-[tasks."image:load"]
-description = "Load the verified native OCI image as maestro:local for Compose"
-run = "python3 -B dev/oci.py load"
-
-[tasks."image:test"]
-description = "Test the scanned native image's HTTP, shutdown and runtime restrictions"
-run = "python3 -B dev/tests/container/smoke.py"
-
-[tasks."test:tooling"]
-description = "Test build integrity and scan failure controls"
-run = "python3 -B -m unittest discover -s dev/tests/tooling -v"
-
-[tasks.test]
-description = "Run uncached tests with the race detector"
-run = "go test -race -count=1 ./..."
-
-[tasks.vet]
-description = "Run go vet"
-run = "go vet ./..."
-
-[tasks."lint:go"]
-description = "Run pinned Staticcheck for Go correctness and style"
-run = "go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./..."
-
-[tasks."test:helpers"]
-description = "Test Python connection configuration and acceptance helpers"
-run = [
-  "python3 -B -I -S -m unittest discover -s dev/tests -p test_maestro_connection.py -v",
-  "python3 -B -I -S -m unittest discover -s dev/tests/acceptance -p 'test_*.py' -v",
-]
+[tasks.dev]
+description = "Run the development server on http://127.0.0.1:8090"
+run = 'go run ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT"'
 
 [tasks.fmt]
-description = "Format maestro Go source (exclude optional reference checkouts)"
+description = "Format Go source"
 run = "gofmt -w cmd internal docs/reference dev/tests/container"
 
-[tasks."fmt:check"]
-description = "Check Go formatting without changing files"
-run = '''
+[tasks.check]
+description = "Check formatting, build, vet, Staticcheck and run all local tests"
+run = [
+  '''
 set -eu
 files="$(gofmt -l cmd internal docs/reference dev/tests/container)"
 if [ -n "$files" ]; then
   printf 'Run mise run fmt for:\n%s\n' "$files"
   exit 1
 fi
-'''
+''',
+  "go build ./...",
+  "go vet ./...",
+  "go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...",
+  "go test -race -count=1 ./...",
+  "python3 -B -m unittest discover -s dev/tests/tooling -v",
+  "python3 -B -I -S -m unittest discover -s dev/tests -p test_maestro_connection.py -v",
+  "python3 -B -I -S -m unittest discover -s dev/tests/acceptance -p 'test_*.py' -v",
+]
 
-[tasks.tidy]
-description = "Tidy go.mod / go.sum"
-run = "go mod tidy"
+[tasks.build]
+description = "Build and scan both Linux platforms, then load maestro:local into Docker"
+run = "python3 -B dev/oci.py build"
+tools = { trivy = "0.74.0", oras = "1.3.4" }
 
-[tasks.dev]
-description = "Run the unauthenticated dev server on loopback only"
-run = 'go run ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT" --key "$MAESTRO_KEY"'
+[tasks."image:publish"]
+description = "Publish the scanned multi-platform image to GHCR"
+run = "python3 -B dev/oci.py publish"
+tools = { oras = "1.3.4" }
 
-[tasks.check]
-description = "Check formatting, build, vet, Staticcheck, race tests and Python helpers"
-depends = ["fmt:check", "build:go", "vet", "lint:go", "test", "test:tooling", "test:helpers"]
+[tasks."image:load"]
+description = "Load the verified native image into Docker as maestro:local"
+run = "python3 -B dev/oci.py load"
+
+[tasks."image:test"]
+description = "Test the container's HTTP endpoints, shutdown and security settings"
+run = "python3 -B dev/tests/container/smoke.py"
+
+[tasks.scan]
+description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
+run = "python3 -B dev/oci.py scan"
+tools = { trivy = "0.74.0" }
 
 [tasks."sdk:test"]
 description = "Test latest stable DBOS Python 2.x and 3.x (or DBOS_SDK_MAJOR)"
@@ -90,30 +63,6 @@ run = "python3 -B dev/tests/python/latest.py"
 tools = { uv = "0.12.21" }
 
 [tasks."ci:lint"]
-description = "Validate GitHub Actions workflow syntax and expressions"
+description = "Validate GitHub Actions workflows"
 run = "actionlint"
 tools = { actionlint = "1.7.12" }
-
-[tasks."python:gate"]
-description = "Opt-in released-Python 2.24.0/2.31.1/3.1.0 SQLite compatibility boundary"
-run = "python3 -I -S dev/tests/python/install.py"
-
-[tasks."postgres:gate"] # TODO: `gate` is LLM slop verbiage, it provides no value. rename.
-description = "Opt-in isolated PostgreSQL 18 + DBOS Python SDK 3.1.0 read smoke (explicit tool paths required)"
-run = "python3 -B -I -S dev/tests/acceptance/postgres_gate.py"
-
-[tasks."dbosctl:gate"]
-description = "Opt-in pinned v0.10.1 dbosctl read-only CLI + fake-executor gate"
-run = "python3 -I -S dev/tests/dbosctl_gate.py"
-
-[tasks."dbosctl:real"]
-description = "Opt-in dbosctl read gate with pinned real Python SDKs (installs isolated SDKs first)"
-run = "python3 -I -S dev/tests/python/install.py && python3 -I -S dev/tests/dbosctl_gate.py --real"
-
-[tasks."demo:executor-connection"]
-description = "End-to-end demo: a real DBOS executor connects to maestro and registers"
-run = "./dev/executor_connection_demo.sh"
-
-[tasks."demo:observability"]
-description = "End-to-end demo: browse a real executor's workflows/steps/queues + the HTML console"
-run = "./dev/observability_demo.sh"

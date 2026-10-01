@@ -30,7 +30,7 @@ Verify:
     curl -s localhost:8090/api/executors | python3 -m json.tool
 maestro should also log: "executor connected".
 
-Tip: `mise run demo:executor-connection` runs the manual Docker example.
+Tip: `./dev/executor_connection_demo.sh` runs the manual Docker example.
 """
 
 import os

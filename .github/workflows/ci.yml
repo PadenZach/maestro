@@ -24,12 +24,6 @@ jobs:
       - run: mise run check
       - run: mise run ci:lint
       - run: mise run scan
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && !env.ACT
-        with:
-          name: source-scan
-          path: dist/source-scan.json
-          if-no-files-found: error
 
   sdk:
     runs-on: ubuntu-24.04
@@ -54,8 +48,12 @@ jobs:
           if-no-files-found: error
 
   image:
+    needs: [checks, sdk]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -63,13 +61,11 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - run: mise run build
-      - run: mise run build:verify
       - run: mise run image:test
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && !env.ACT
-        with:
-          name: maestro-oci
-          path: |
-            dist/maestro.oci.tar
-            dist/reports/
-          if-no-files-found: error
+      - name: Publish image to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          GHCR_IMAGE: ${{ vars.GHCR_IMAGE }}
+          GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+        run: mise run image:publish

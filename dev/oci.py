@@ -1,4 +1,4 @@
-"""Build a local OCI layout and attach digest-bound Trivy reports using ORAS."""
+"""Build scanned images into Docker or publish one multi-platform registry image."""
 
 import argparse
 import gzip
@@ -16,8 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
-REPORT_TYPE = "application/vnd.maestro.vulnerability-report.v1+json"
 PLATFORMS = {"amd64", "arm64"}
+REPORTS_LABEL = "io.maestro.scan.reports"
+SCANNER_LABEL = "io.maestro.scan.scanner"
 
 
 def run(*args, **kwargs):
@@ -81,35 +82,19 @@ def verify(layout):
         if d.get("platform", {}).get("os") == "linux"
     }
     assert set(images) == PLATFORMS, "image must contain linux/amd64 and linux/arm64"
-    attachments = []
-    for descriptor in json.loads((layout / "index.json").read_text())["manifests"]:
-        manifest = blob_json(layout, descriptor)
-        if manifest.get("artifactType") == REPORT_TYPE:
-            assert manifest["subject"]["digest"] == root["digest"], (
-                "scan subject differs from image"
-            )
-            attachments.append(manifest)
-    assert len(attachments) == 1, "image must have exactly one attached scan artifact"
-    files = {
-        layer["annotations"]["org.opencontainers.image.title"]: json.loads(
-            read_blob(layout, layer)
-        )
-        for layer in attachments[0]["layers"]
-    }
-    summary = files["scan-summary.json"]
-    assert summary["subject"] == root["digest"], (
-        "scan summary subject differs from image"
-    )
-    assert summary["scanner"]["Version"], "missing scanner version"
-    assert summary["scanner"]["VulnerabilityDB"]["UpdatedAt"], (
-        "missing vulnerability database metadata"
-    )
-    assert set(summary["platforms"]) == PLATFORMS, "missing platform scan metadata"
+    scan_labels = None
     for arch, descriptor in images.items():
         manifest = blob_json(layout, descriptor)
         config = blob_json(layout, manifest["config"])
+        diff_ids = []
         for layer in manifest["layers"]:
-            read_blob(layout, layer)
+            data = read_blob(layout, layer)
+            if layer["mediaType"].endswith("+gzip"):
+                data = gzip.decompress(data)
+            else:
+                assert layer["mediaType"] == "application/vnd.oci.image.layer.v1.tar"
+            diff_ids.append("sha256:" + hashlib.sha256(data).hexdigest())
+        assert config["rootfs"]["diff_ids"] == diff_ids, "image rootfs digest mismatch"
         assert config["os"] == "linux" and config["architecture"] == arch
         assert config["config"]["User"] == "65532:65532", "image must run as non-root"
         assert config["config"]["Entrypoint"] == ["/maestro"]
@@ -132,13 +117,29 @@ def verify(layout):
         datetime.fromisoformat(
             labels["org.opencontainers.image.created"].replace("Z", "+00:00")
         )
-        assert summary["platforms"][arch] == descriptor["digest"], (
-            "scan platform digest mismatch"
+        assert REPORTS_LABEL in labels and SCANNER_LABEL in labels, (
+            "missing embedded scan metadata"
         )
-        report = files[f"trivy-{arch}.json"]
-        assert report["Metadata"]["ImageID"] == manifest["config"]["digest"], (
-            "scan image config mismatch"
+        current_labels = (labels[REPORTS_LABEL], labels[SCANNER_LABEL])
+        if scan_labels is None:
+            scan_labels = current_labels
+        assert current_labels == scan_labels, "platform scan metadata differs"
+        reports = json.loads(labels[REPORTS_LABEL])
+        scanner = json.loads(labels[SCANNER_LABEL])
+        assert set(reports) == PLATFORMS, "missing platform scan metadata"
+        assert scanner["Version"], "missing scanner version"
+        assert scanner["VulnerabilityDB"]["UpdatedAt"], (
+            "missing vulnerability database metadata"
         )
+        report = reports[arch]
+        assert report["Metadata"]["ImageConfig"]["architecture"] == arch
+        assert report["Metadata"]["ImageConfig"]["os"] == "linux"
+        assert report["Metadata"]["DiffIDs"] == diff_ids, (
+            "scan filesystem digest mismatch"
+        )
+        assert [layer["Digest"] for layer in report["Metadata"]["Layers"]] == [
+            layer["digest"] for layer in manifest["layers"]
+        ], "scan layer digest mismatch"
         binaries = [r for r in report["Results"] if r.get("Type") == "gobinary"]
         assert binaries, "scanner did not find the Go binary"
         packages = {p["Name"] for r in binaries for p in r["Packages"]}
@@ -149,7 +150,7 @@ def verify(layout):
         } <= packages, "scan omitted Go dependencies"
         reject_vulnerabilities(report)
     print(
-        "Verified OCI labels, both platforms, Go inventory and attached scan digests",
+        "Verified OCI labels, both platforms, Go inventory and embedded scan digests",
         flush=True,
     )
     return root
@@ -181,8 +182,8 @@ def scan_source():
 
 def build():
     DIST.mkdir(exist_ok=True)
-    archive = DIST / "maestro.oci.tar"
-    archive.unlink(missing_ok=True)
+    # Remove the obsolete generated deliverable from earlier builds.
+    (DIST / "maestro.oci.tar").unlink(missing_ok=True)
     revision = output("git", "rev-parse", "HEAD")
     version = os.environ.get("VERSION") or output(
         "git", "describe", "--tags", "--always", "--dirty"
@@ -213,7 +214,7 @@ def build():
                 "--driver",
                 "docker-container",
             )
-    run(
+    build_command = [
         "docker",
         "buildx",
         "build",
@@ -221,7 +222,6 @@ def build():
         builder,
         "--platform",
         "linux/amd64,linux/arm64",
-        "--provenance=mode=min",
         "--build-arg",
         f"VERSION={version}",
         "--build-arg",
@@ -238,21 +238,20 @@ def build():
         f"index:org.opencontainers.image.version={version}",
         "--output",
         f"type=oci,dest={layout},tar=false",
-        str(ROOT),
-    )
+    ]
+    run(*build_command, "--provenance=false", str(ROOT))
     root = json.loads((layout / "index.json").read_text())["manifests"][0]
     run("oras", "tag", "--oci-layout", f"{layout}@{root['digest']}", "maestro")
     index = blob_json(layout, root)
-    summary = {"subject": root["digest"], "created": created, "platforms": {}}
     reports = DIST / "reports"
     reports.mkdir(exist_ok=True)
+    embedded = {}
     for descriptor in index["manifests"]:
         platform = descriptor.get("platform", {})
         if platform.get("os") != "linux":
-            continue  # BuildKit provenance is preserved in the original index.
+            continue
         arch = platform["architecture"]
         assert arch in PLATFORMS, "unexpected image platform"
-        summary["platforms"][arch] = descriptor["digest"]
         # Give Trivy a single-manifest view so local OCI platform selection is
         # unambiguous, including versions that ignore --platform for --input.
         with tempfile.TemporaryDirectory(prefix="maestro-scan-", dir=DIST) as scratch:
@@ -276,25 +275,28 @@ def build():
                 "--output",
                 str(reports / f"trivy-{arch}.json"),
             )
-    summary["scanner"] = json.loads(output("trivy", "version", "--format", "json"))
-    write_json(reports / "scan-summary.json", summary)
+        report = json.loads((reports / f"trivy-{arch}.json").read_text())
+        reject_vulnerabilities(report)
+        embedded[arch] = report
+    scanner = json.loads(output("trivy", "version", "--format", "json"))
+    assert set(embedded) == PLATFORMS, "missing platform scan"
+    # The second export adds config labels using the cached build. Its provenance
+    # describes the final image. Verification below proves its filesystem layers
+    # are byte-for-byte identical to those scanned before metadata was added.
+    shutil.rmtree(layout)
     run(
-        "oras",
-        "attach",
-        "--oci-layout",
-        "--artifact-type",
-        REPORT_TYPE,
-        f"{layout}@{root['digest']}",
-        "scan-summary.json:application/json",
-        "trivy-amd64.json:application/vnd.aquasec.trivy.report+json",
-        "trivy-arm64.json:application/vnd.aquasec.trivy.report+json",
-        cwd=reports,
+        *build_command,
+        "--provenance=mode=min",
+        "--label",
+        f"{REPORTS_LABEL}=" + json.dumps(embedded, separators=(",", ":")),
+        "--label",
+        f"{SCANNER_LABEL}=" + json.dumps(scanner, separators=(",", ":")),
+        str(ROOT),
     )
+    root = json.loads((layout / "index.json").read_text())["manifests"][0]
+    run("oras", "tag", "--oci-layout", f"{layout}@{root['digest']}", "maestro")
     verify(layout)
-    with tarfile.open(archive, "w") as tar:
-        for name in ("oci-layout", "index.json", "blobs"):
-            tar.add(layout / name, arcname=name)
-    print(f"Built {archive.relative_to(ROOT)} ({root['digest']})", flush=True)
+    print(f"Built scanned multi-platform image ({root['digest']})", flush=True)
 
 
 def load_image(arch, tag):
@@ -344,22 +346,73 @@ def load_image(arch, tag):
     )
 
 
+def publish():
+    """Publish one GHCR tag, including both platforms and their scan labels."""
+    repository = os.environ.get("GHCR_IMAGE") or (
+        "ghcr.io/" + os.environ.get("GITHUB_REPOSITORY", "")
+    )
+    repository = repository.lower()
+    if not re.fullmatch(
+        r"ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*", repository
+    ):
+        raise ValueError("Set GHCR_IMAGE to ghcr.io/OWNER/IMAGE")
+    tag = os.environ.get("IMAGE_TAG") or "sha-" + output("git", "rev-parse", "HEAD")
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag):
+        raise ValueError("IMAGE_TAG must be a valid container tag")
+    root = verify(DIST / "oci")
+    reference = f"{repository}:{tag}"
+    with tempfile.TemporaryDirectory(prefix="maestro-registry-") as scratch:
+        auth = []
+        token = os.environ.get("GHCR_TOKEN")
+        if token:
+            username = os.environ.get("GHCR_USERNAME") or os.environ.get("GITHUB_ACTOR")
+            if not username:
+                raise ValueError("Set GHCR_USERNAME to the registry token's owner")
+            auth = ["--registry-config", str(Path(scratch) / "config.json")]
+            run(
+                "oras",
+                "login",
+                *auth,
+                "ghcr.io",
+                "--username",
+                username,
+                "--password-stdin",
+                input=token,
+            )
+        run(
+            "oras",
+            "copy",
+            *auth,
+            "--from-oci-layout",
+            f"{DIST / 'oci'}:maestro",
+            reference,
+        )
+        assert output("oras", "resolve", *auth, reference) == root["digest"], (
+            "published image digest differs from the verified image"
+        )
+    print(f"Published {reference}@{root['digest']}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("build", "scan", "verify", "load"))
+    parser.add_argument(
+        "command", choices=("build", "scan", "verify", "load", "publish")
+    )
     parser.add_argument("--arch", choices=sorted(PLATFORMS))
     parser.add_argument("--tag", default="maestro:local")
     args = parser.parse_args()
     os.chdir(ROOT)
     if args.command == "build":
         build()
-    elif args.command == "scan":
+    if args.command == "scan":
         scan_source()
-    elif args.command == "load":
+    elif args.command in {"build", "load"}:
         arch = args.arch or output("docker", "version", "--format", "{{.Server.Arch}}")
         if arch not in PLATFORMS:
             raise ValueError(f"unsupported Docker architecture: {arch}")
         load_image(arch, args.tag)
+    elif args.command == "publish":
+        publish()
     else:
         verify(DIST / "oci")
 
