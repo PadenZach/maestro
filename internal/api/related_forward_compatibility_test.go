@@ -11,7 +11,7 @@ import (
 // An untested SDK identity is not evidence that an existing read cannot work.
 // Exercise both HTTP surfaces: Console reads use the same hub dispatch as /api.
 func TestRelatedReadsAttemptUnrecognizedSDKs(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	handlers := map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -48,7 +48,7 @@ func TestRelatedReadsSurfaceActualErrorsFromUnrecognizedSDK(t *testing.T) {
 		{"malformed response", map[string]any{"events": nil}, "missing or null"},
 	} {
 		t.Run(response.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			var calls atomic.Int32
 			for _, id := range []string{"one", "two"} {
 				dialScheduleConsoleFake(t, ts.URL, "fixture-app", id, "", "", map[protocol.MessageType]respondFn{

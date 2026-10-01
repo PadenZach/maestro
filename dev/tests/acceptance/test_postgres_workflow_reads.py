@@ -86,6 +86,17 @@ def sdk_digest(wire):
 
 
 class PostgresWorkflowReadValidationTests(unittest.TestCase):
+    def test_preserves_sdk_null_priority_and_updated_at(self):
+        workflow = dict(HTTP_WORKFLOW, priority=None, updatedAt=None)
+        wire = dict(SDK_WORKFLOW_WIRE, Priority=None, UpdatedAt=None)
+        postgres_gate.validate_official_workflow(workflow, sdk_digest(wire))
+        for replacement in (
+            dict(workflow, priority=0),
+            dict(workflow, updatedAt=HTTP_WORKFLOW["createdAt"]),
+        ):
+            with self.assertRaisesRegex(AssertionError, "field values differ from SDK"):
+                postgres_gate.validate_official_workflow(replacement, sdk_digest(wire))
+
     def test_accepts_exact_pinned_schema_and_sdk_converted_values(self):
         postgres_gate.validate_official_workflow(
             dict(HTTP_WORKFLOW), sdk_digest(SDK_WORKFLOW_WIRE)

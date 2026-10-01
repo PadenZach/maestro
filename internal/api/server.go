@@ -25,6 +25,9 @@ type Server struct {
 // New builds the HTTP server and registers routes. A template parse error is a
 // programming error (templates are compiled into the binary), so it panics.
 func New(cfg config.Config, h *hub.Hub, log *slog.Logger) *Server {
+	if cfg.OrgName == "" {
+		cfg.OrgName = "local"
+	}
 	r, err := web.New()
 	if err != nil {
 		panic(err)

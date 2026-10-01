@@ -73,7 +73,7 @@ func localV2ScheduleQuery(r *http.Request) (protocol.ListSchedulesBody, error) {
 }
 
 func (s *Server) localV2Schedules(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	body, err := localV2ScheduleQuery(r)
@@ -103,7 +103,7 @@ func (s *Server) localV2Schedules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) localV2GetSchedule(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
+	if !s.localV2Allowed(w, r) || !localV2NoQuery(w, r) {
 		return
 	}
 	var response protocol.GetScheduleResponse

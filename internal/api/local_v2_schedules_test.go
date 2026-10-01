@@ -71,7 +71,7 @@ func scheduleWireRecord() map[string]any {
 }
 
 func TestLocalHTTPV2ScheduleSchemaWireAndFilters(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var listCalls atomic.Int32
 	fe := dialScheduleFake(t, ts.URL, "schedule-exec", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgListSchedules: func(req map[string]any) map[string]any {
@@ -161,7 +161,7 @@ func TestLocalHTTPV2ScheduleSchemaWireAndFilters(t *testing.T) {
 func TestLocalHTTPV2ScheduleRequiredFieldsNullsAndTypes(t *testing.T) {
 	request := func(t *testing.T, row map[string]any) (int, string, map[string]any) {
 		t.Helper()
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 			protocol.MsgGetSchedule: func(map[string]any) map[string]any { return map[string]any{"output": row} },
 		})
@@ -277,7 +277,7 @@ func TestLocalHTTPV2ScheduleResponseErrorsAndRetry(t *testing.T) {
 		{"missing-get-output", "/nightly", protocol.MsgGetSchedule, map[string]any{}, 502},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 				tc.command: func(map[string]any) map[string]any { return tc.response },
 			})
@@ -296,7 +296,7 @@ func TestLocalHTTPV2ScheduleResponseErrorsAndRetry(t *testing.T) {
 	}
 
 	t.Run("SDK refusal is final", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		refuse := func(map[string]any) map[string]any {
 			calls.Add(1)
@@ -313,7 +313,7 @@ func TestLocalHTTPV2ScheduleResponseErrorsAndRetry(t *testing.T) {
 	})
 
 	t.Run("disconnect retries pure read", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		handle := func(map[string]any) map[string]any {
 			if calls.Add(1) == 1 {
@@ -332,7 +332,7 @@ func TestLocalHTTPV2ScheduleResponseErrorsAndRetry(t *testing.T) {
 	})
 
 	t.Run("disconnect without alternate", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 			protocol.MsgGetSchedule: func(map[string]any) map[string]any { return nil },
 		})
@@ -345,7 +345,7 @@ func TestLocalHTTPV2ScheduleResponseErrorsAndRetry(t *testing.T) {
 }
 
 func TestLocalHTTPV2ScheduleRequestValidationAndCapability(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgListSchedules: func(map[string]any) map[string]any { calls.Add(1); return map[string]any{"output": []any{}} },
@@ -393,13 +393,13 @@ func TestLocalHTTPV2ScheduleRequestValidationAndCapability(t *testing.T) {
 	if code != 503 {
 		t.Fatalf("absent executor: %d", code)
 	}
-	disabled, _ := localV2Server(t, false)
-	code, _, _ = localV2Request(t, disabled.URL+localV2ScheduleRoot, "GET", "")
-	if code != 404 {
-		t.Fatalf("default-off adapter: %d", code)
+	unavailable, _ := localV2Server(t)
+	code, _, _ = localV2Request(t, unavailable.URL+localV2ScheduleRoot, "GET", "")
+	if code != 503 {
+		t.Fatalf("unavailable adapter: %d", code)
 	}
 
-	unsupported, unsupportedHub := localV2Server(t, true)
+	unsupported, unsupportedHub := localV2Server(t)
 	var unsupportedCalls atomic.Int32
 	dialScheduleFake(t, unsupported.URL, "old", "2.31.1", map[protocol.MessageType]respondFn{
 		protocol.MsgListSchedules: func(map[string]any) map[string]any { unsupportedCalls.Add(1); return map[string]any{"output": []any{}} },

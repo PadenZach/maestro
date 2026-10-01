@@ -18,7 +18,7 @@ import (
 	"github.com/zpaden/maestro/internal/hub"
 )
 
-func TestLocalHTTPV2ActualListenerMustBeLoopback(t *testing.T) {
+func TestHTTPListenerLoopbackRestriction(t *testing.T) {
 	for _, tc := range []struct {
 		addr    string
 		allowed bool
@@ -29,10 +29,10 @@ func TestLocalHTTPV2ActualListenerMustBeLoopback(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer l.Close()
-			if got := validateLocalHTTPV2(true, l.Addr()); (got == nil) != tc.allowed {
+			if got := validateHTTPListener(true, l.Addr()); (got == nil) != tc.allowed {
 				t.Fatalf("listener %v: %v", l.Addr(), got)
 			}
-			if err := validateLocalHTTPV2(false, l.Addr()); err != nil {
+			if err := validateHTTPListener(false, l.Addr()); err != nil {
 				t.Fatalf("default mode: %v", err)
 			}
 		})

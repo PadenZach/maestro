@@ -23,7 +23,7 @@ func queueWireRecord() map[string]any {
 }
 
 func TestLocalHTTPV2QueueSchemaAndWire(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialFake(t, ts, "fixture-app", "testkey", "queue-exec", map[protocol.MessageType]respondFn{
 		protocol.MsgListQueues: func(req map[string]any) map[string]any {
@@ -87,7 +87,7 @@ func TestLocalHTTPV2QueueErrorsAndNulls(t *testing.T) {
 		{"refusal", "/jobs", map[string]any{"error_message": "metadata only"}, 502},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			var calls atomic.Int32
 			handler := func(map[string]any) map[string]any { calls.Add(1); return tc.output }
 			for _, id := range []string{"one", "two"} {
@@ -118,7 +118,7 @@ func TestLocalHTTPV2QueueErrorsAndNulls(t *testing.T) {
 				} else {
 					row[field] = nil
 				}
-				ts, h := localV2Server(t, true)
+				ts, h := localV2Server(t)
 				dialFake(t, ts, "fixture-app", "testkey", "one", map[protocol.MessageType]respondFn{protocol.MsgGetQueue: func(map[string]any) map[string]any { return map[string]any{"output": row} }})
 				waitFor(t, func() bool { return len(h.Executors()) == 1 })
 				code, _, raw := localV2Request(t, ts.URL+localV2QueueRoot+"/jobs", "GET", "")
@@ -132,7 +132,7 @@ func TestLocalHTTPV2QueueErrorsAndNulls(t *testing.T) {
 		t.Run(field+"/overflow", func(t *testing.T) {
 			row := queueWireRecord()
 			row[field] = int64(2147483648)
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			dialFake(t, ts, "fixture-app", "testkey", "one", map[protocol.MessageType]respondFn{protocol.MsgGetQueue: func(map[string]any) map[string]any { return map[string]any{"output": row} }})
 			waitFor(t, func() bool { return len(h.Executors()) == 1 })
 			code, _, raw := localV2Request(t, ts.URL+localV2QueueRoot+"/jobs", "GET", "")
@@ -160,7 +160,7 @@ func TestLocalHTTPV2QueueNullablePresenceAndZero(t *testing.T) {
 	}
 	request := func(t *testing.T, row map[string]any) (int, string, map[string]any) {
 		t.Helper()
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		dialFake(t, ts, "fixture-app", "testkey", "one", map[protocol.MessageType]respondFn{
 			protocol.MsgGetQueue: func(map[string]any) map[string]any { return map[string]any{"output": row} },
 		})
@@ -217,7 +217,7 @@ func TestLocalHTTPV2QueueNullablePresenceAndZero(t *testing.T) {
 }
 
 func TestLocalHTTPV2QueueRequestValidation(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	dialFake(t, ts, "fixture-app", "testkey", "one", map[protocol.MessageType]respondFn{protocol.MsgListQueues: func(map[string]any) map[string]any { calls.Add(1); return map[string]any{"output": []any{}} }, protocol.MsgGetQueue: func(map[string]any) map[string]any { calls.Add(1); return map[string]any{"output": queueWireRecord()} }})
 	waitFor(t, func() bool { return len(h.Executors()) == 1 })
@@ -238,9 +238,9 @@ func TestLocalHTTPV2QueueRequestValidation(t *testing.T) {
 	if code != 503 {
 		t.Fatalf("absent executor: %d", code)
 	}
-	disabled, _ := localV2Server(t, false)
-	code, _, _ = localV2Request(t, disabled.URL+localV2QueueRoot, "GET", "")
-	if code != 404 {
-		t.Fatalf("disabled adapter: %d", code)
+	unavailable, _ := localV2Server(t)
+	code, _, _ = localV2Request(t, unavailable.URL+localV2QueueRoot, "GET", "")
+	if code != 503 {
+		t.Fatalf("unavailable adapter: %d", code)
 	}
 }

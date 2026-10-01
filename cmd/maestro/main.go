@@ -46,15 +46,15 @@ func serve(ctx context.Context, listener net.Listener, server *http.Server, h *h
 	return errors.Join(serveErr, httpErr, hubErr)
 }
 
-// validateLocalHTTPV2 checks the bound socket rather than trusting a hostname
+// validateHTTPListener checks the bound socket rather than trusting a hostname
 // that might resolve to a different address at listen time.
-func validateLocalHTTPV2(enabled bool, addr net.Addr) error {
-	if !enabled {
+func validateHTTPListener(restrictToLoopback bool, addr net.Addr) error {
+	if !restrictToLoopback {
 		return nil
 	}
 	tcp, ok := addr.(*net.TCPAddr)
 	if !ok || tcp.IP == nil || !tcp.IP.IsLoopback() {
-		return fmt.Errorf("--local-http-v2 requires an actual loopback TCP listener")
+		return fmt.Errorf("non-loopback listeners require --allow-remote")
 	}
 	return nil
 }
@@ -73,9 +73,9 @@ func main() {
 		log.Error("http listen failed", "err", err)
 		os.Exit(1)
 	}
-	if err := validateLocalHTTPV2(cfg.LocalHTTPV2, listener.Addr()); err != nil {
+	if err := validateHTTPListener(!cfg.AllowRemote, listener.Addr()); err != nil {
 		_ = listener.Close()
-		log.Error("unsafe local adapter listener", "err", err)
+		log.Error("invalid HTTP listener configuration", "err", err)
 		os.Exit(1)
 	}
 	log.Info("maestro listening", "addr", listener.Addr().String())

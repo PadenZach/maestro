@@ -267,8 +267,8 @@ func localV2StepAggregateBody(fields map[string]json.RawMessage) (protocol.StepA
 	return body, nil
 }
 
-func localV2InspectionAggregateRequest(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}) (map[string]json.RawMessage, bool) {
-	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
+func (s *Server) localV2InspectionAggregateRequest(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}) (map[string]json.RawMessage, bool) {
+	if !s.localV2Allowed(w, r) || !localV2NoQuery(w, r) {
 		return nil, false
 	}
 	if err := localV2InspectionApp(r.PathValue("app")); err != nil {
@@ -450,7 +450,7 @@ func localV2StepAggregateRecord(raw json.RawMessage) (map[string]any, error) {
 }
 
 func (s *Server) localV2WorkflowAggregates(w http.ResponseWriter, r *http.Request) {
-	fields, ok := localV2InspectionAggregateRequest(w, r, localV2WorkflowAggregateFields)
+	fields, ok := s.localV2InspectionAggregateRequest(w, r, localV2WorkflowAggregateFields)
 	if !ok {
 		return
 	}
@@ -482,7 +482,7 @@ func (s *Server) localV2WorkflowAggregates(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) localV2StepAggregates(w http.ResponseWriter, r *http.Request) {
-	fields, ok := localV2InspectionAggregateRequest(w, r, localV2StepAggregateFields)
+	fields, ok := s.localV2InspectionAggregateRequest(w, r, localV2StepAggregateFields)
 	if !ok {
 		return
 	}
@@ -597,7 +597,7 @@ func localV2ExportValue(raw []byte) (string, error) {
 }
 
 func (s *Server) localV2ExportWorkflow(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	app, workflowID := r.PathValue("app"), r.PathValue("id")

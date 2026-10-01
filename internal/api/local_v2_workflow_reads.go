@@ -319,7 +319,7 @@ func (s *Server) localV2WriteWorkflows(w http.ResponseWriter, r *http.Request, b
 }
 
 func (s *Server) localV2ListWorkflows(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	if err := localV2InspectionApp(r.PathValue("app")); err != nil {
@@ -335,7 +335,7 @@ func (s *Server) localV2ListWorkflows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) localV2Search(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	if err := localV2InspectionApp(r.PathValue("app")); err != nil {

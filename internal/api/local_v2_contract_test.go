@@ -21,11 +21,11 @@ import (
 
 const localV2WorkflowRoot = "/v2/orgs/local/apps/fixture-app/workflows"
 
-func localV2Server(t *testing.T, enabled bool) (*httptest.Server, *hub.Hub) {
+func localV2Server(t *testing.T) (*httptest.Server, *hub.Hub) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, 2*time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey", LocalHTTPV2: enabled, ListenAddr: "127.0.0.1:0"}, h, log)
+	srv := api.New(config.Config{ConductorKey: "testkey", ListenAddr: "127.0.0.1:0"}, h, log)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, h
@@ -57,7 +57,7 @@ func localV2Record() map[string]any {
 
 func localV2Fixture(t *testing.T) (*httptest.Server, *fakeExec) {
 	t.Helper()
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	rows := make([]map[string]any, 30)
 	for i := range rows {
 		rows[i] = localV2Record()
@@ -286,7 +286,7 @@ func TestLocalHTTPV2NullExecutorCollections(t *testing.T) {
 		{"steps-null", "/wf-1/steps", "GET", "", protocol.MsgListSteps},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
 				protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return map[string]any{"output": localV2Record()} },
 				tc.command:              func(map[string]any) map[string]any { return map[string]any{"output": nil} },
@@ -301,7 +301,7 @@ func TestLocalHTTPV2NullExecutorCollections(t *testing.T) {
 }
 
 func TestLocalHTTPV2ExplicitEmptyExecutorCollections(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow:   func(map[string]any) map[string]any { return map[string]any{"output": localV2Record()} },
 		protocol.MsgListWorkflows: func(map[string]any) map[string]any { return map[string]any{"output": []any{}} },
@@ -329,7 +329,7 @@ func TestLocalHTTPV2MissingExecutorRequiredScalars(t *testing.T) {
 		{"list-missing-was-forked", "WasForkedFrom", "/search", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			record := localV2Record()
 			step := map[string]any{"function_id": 0, "function_name": "step-one"}
 			if tc.route == "/wf-1/steps" {
@@ -362,7 +362,7 @@ func TestLocalHTTPV2MissingExecutorRequiredScalars(t *testing.T) {
 }
 
 func TestLocalHTTPV2PresenceChecksDoNotChangeLegacyJSON(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	record := localV2Record()
 	delete(record, "WasForkedFrom")
 	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
@@ -385,7 +385,7 @@ func TestLocalHTTPV2PresenceChecksDoNotChangeLegacyJSON(t *testing.T) {
 }
 
 func TestLocalHTTPV2InvalidStepID(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return map[string]any{"output": localV2Record()} },
 		protocol.MsgListSteps: func(map[string]any) map[string]any {
@@ -405,12 +405,11 @@ func TestLocalHTTPV2InvalidExecutorValues(t *testing.T) {
 		field string
 		value any
 	}{
-		{"null-priority", "Priority", nil}, {"null-updated", "UpdatedAt", nil},
 		{"bad-created", "CreatedAt", "not-an-epoch"}, {"overflow-priority", "Priority", "2147483648"},
 		{"bad-timeout", "WorkflowTimeoutMS", "not-a-number"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			record := localV2Record()
 			record[tc.field] = tc.value
 			dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
@@ -426,7 +425,7 @@ func TestLocalHTTPV2InvalidExecutorValues(t *testing.T) {
 }
 
 func TestLocalHTTPV2PrivacyRefusalIsNotRetried(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var attempts atomic.Int32
 	refusal := map[protocol.MessageType]respondFn{protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
 		attempts.Add(1)
@@ -444,7 +443,7 @@ func TestLocalHTTPV2PrivacyRefusalIsNotRetried(t *testing.T) {
 func TestLocalHTTPV2RejectsNonLoopbackRemote(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey", LocalHTTPV2: true}, h, log)
+	srv := api.New(config.Config{ConductorKey: "testkey"}, h, log)
 	r := httptest.NewRequest("GET", localV2WorkflowRoot+"/wf-1", nil)
 	r.RemoteAddr = "198.51.100.20:4321"
 	w := httptest.NewRecorder()
@@ -454,13 +453,8 @@ func TestLocalHTTPV2RejectsNonLoopbackRemote(t *testing.T) {
 	}
 }
 
-func TestLocalHTTPV2DefaultOffAndUnavailable(t *testing.T) {
-	ts, _ := localV2Server(t, false)
-	code, _, _ := localV2Request(t, ts.URL+localV2WorkflowRoot+"/wf-1", "GET", "")
-	if code != 404 {
-		t.Fatalf("default off: %d", code)
-	}
-	ts, _ = localV2Server(t, true)
+func TestLocalHTTPV2Unavailable(t *testing.T) {
+	ts, _ := localV2Server(t)
 	code, ct, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+"/wf-1", "GET", "")
 	if code != 503 || !strings.HasPrefix(ct, "application/problem+json") || !strings.Contains(raw, "detail") {
 		t.Fatalf("unavailable: %d %s %s", code, ct, raw)

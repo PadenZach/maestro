@@ -148,7 +148,7 @@ func assertRelatedSchema(t *testing.T, schemaName string, record map[string]any)
 }
 
 func TestLocalHTTPV2RelatedSchemaAndWire(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	responses := relatedWireResponses()
 	fe := dialScheduleFake(t, ts.URL, "related-exec", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -249,7 +249,7 @@ func TestLocalHTTPV2RelatedEmptyMissingAndMalformedResponses(t *testing.T) {
 			{"not-array", map[string]any{command.field: map[string]any{}}, 502},
 		} {
 			t.Run(command.suffix+"/"+response.name, func(t *testing.T) {
-				ts, h := localV2Server(t, true)
+				ts, h := localV2Server(t)
 				var relatedCalls atomic.Int32
 				dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 					protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -301,7 +301,7 @@ func TestLocalHTTPV2RelatedEmptyMissingAndMalformedResponses(t *testing.T) {
 	}
 	for _, tc := range malformed {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 				protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
 					return map[string]any{"output": relatedExistingWorkflow(req["workflow_id"])}
@@ -339,7 +339,7 @@ func TestLocalHTTPV2RelatedDistinguishesMissingWorkflow(t *testing.T) {
 	for _, suffix := range []string{"events", "notifications", "streams"} {
 		for _, response := range responses {
 			t.Run(suffix+"/"+response.name, func(t *testing.T) {
-				ts, h := localV2Server(t, true)
+				ts, h := localV2Server(t)
 				var relatedCalls atomic.Int32
 				dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 					protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return response.body },
@@ -367,7 +367,7 @@ func TestLocalHTTPV2RelatedDistinguishesMissingWorkflow(t *testing.T) {
 }
 
 func TestLocalHTTPV2RelatedRequestValidation(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -420,18 +420,12 @@ func TestLocalHTTPV2RelatedRequestValidation(t *testing.T) {
 	if code != 404 {
 		t.Fatalf("unknown org status=%d", code)
 	}
-	unavailable, _ := localV2Server(t, true)
+	unavailable, _ := localV2Server(t)
 	code, _, _ = localV2Request(t, unavailable.URL+localV2RelatedWorkflowRoot+"/wf-1/events", "GET", "")
 	if code != 503 {
 		t.Fatalf("unavailable app status=%d", code)
 	}
-	disabled, _ := localV2Server(t, false)
-	code, _, _ = localV2Request(t, disabled.URL+localV2RelatedWorkflowRoot+"/wf-1/events", "GET", "")
-	if code != 404 {
-		t.Fatalf("default-off status=%d", code)
-	}
-
-	unsupported, unsupportedHub := localV2Server(t, true)
+	unsupported, unsupportedHub := localV2Server(t)
 	var unsupportedCalls atomic.Int32
 	dialScheduleFake(t, unsupported.URL, "future", "3.1.1", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
@@ -451,7 +445,7 @@ func TestLocalHTTPV2RelatedRequestValidation(t *testing.T) {
 }
 
 func TestLocalHTTPV2RelatedReadsAllowMixedSDKVersions(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var reviewedRelatedCalls atomic.Int32
 	dialScheduleFake(t, ts.URL, "reviewed", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -484,7 +478,7 @@ func TestLocalHTTPV2RelatedReadsAllowMixedSDKVersions(t *testing.T) {
 }
 
 func TestLocalHTTPV2RelatedRetryAllowsNewSDKJoiningDuringExistenceRead(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	existenceStarted := make(chan struct{})
 	releaseExistence := make(chan struct{})
 	dialScheduleFake(t, ts.URL, "reviewed", "3.1.0", map[protocol.MessageType]respondFn{
@@ -540,7 +534,7 @@ func TestLocalHTTPV2RelatedRetryAllowsNewSDKJoiningDuringExistenceRead(t *testin
 
 func TestLocalHTTPV2RelatedRefusalIsFinalAndDisconnectRetries(t *testing.T) {
 	t.Run("privacy refusal", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		for _, id := range []string{"one", "two"} {
 			dialScheduleFake(t, ts.URL, id, "3.1.0", map[protocol.MessageType]respondFn{
@@ -561,7 +555,7 @@ func TestLocalHTTPV2RelatedRefusalIsFinalAndDisconnectRetries(t *testing.T) {
 	})
 
 	t.Run("pure read disconnect", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		handlers := map[protocol.MessageType]respondFn{
 			protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {

@@ -40,7 +40,7 @@ func localV2NoQuery(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) localV2Queues(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
+	if !s.localV2Allowed(w, r) || !localV2NoQuery(w, r) {
 		return
 	}
 	var resp protocol.ListQueuesResponse
@@ -65,7 +65,7 @@ func (s *Server) localV2Queues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) localV2GetQueue(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
+	if !s.localV2Allowed(w, r) || !localV2NoQuery(w, r) {
 		return
 	}
 	var resp protocol.GetQueueResponse

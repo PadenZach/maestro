@@ -49,12 +49,12 @@ func (h docsAcceptanceLog) Handle(ctx context.Context, record slog.Record) error
 	return h.Handler.Handle(ctx, record)
 }
 
-func docsAcceptanceServer(t *testing.T, enabled bool) (*httptest.Server, <-chan struct{}) {
+func docsAcceptanceServer(t *testing.T, org string) (*httptest.Server, <-chan struct{}) {
 	t.Helper()
 	connected := make(chan struct{}, 1)
 	logger := slog.New(docsAcceptanceLog{slog.NewTextHandler(io.Discard, nil), connected})
 	h := hub.New(logger, 2*time.Second)
-	s := api.New(config.Config{LocalHTTPV2: enabled, ListenAddr: "127.0.0.1:0"}, h, logger)
+	s := api.New(config.Config{OrgName: org, ListenAddr: "127.0.0.1:0"}, h, logger)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, connected
@@ -147,7 +147,7 @@ func docsAcceptanceAllowsType(t *testing.T, schema map[string]any, want string) 
 }
 
 func TestDocsAcceptanceLocalSchemasPreserveSDKResponses(t *testing.T) {
-	ts, connected := docsAcceptanceServer(t, false)
+	ts, connected := docsAcceptanceServer(t, "other")
 	spec := docsAcceptanceSpec(t, ts)
 	workflowSchema := docsAcceptanceResponseSchema(t, spec, "/api/{app}/workflows/{id}", "200")
 	properties, _ := workflowSchema["properties"].(map[string]any)
@@ -220,7 +220,7 @@ func TestDocsAcceptanceLocalSchemasPreserveSDKResponses(t *testing.T) {
 }
 
 func TestDocsAcceptancePinnedSchemasAndServerIsolation(t *testing.T) {
-	enabled, _ := docsAcceptanceServer(t, true)
+	enabled, _ := docsAcceptanceServer(t, "local")
 	first := docsAcceptanceSpec(t, enabled)
 	data, err := os.ReadFile("../../docs/reference/conductor-openapi-2026-09-25.json")
 	if err != nil {
@@ -258,17 +258,25 @@ func TestDocsAcceptancePinnedSchemasAndServerIsolation(t *testing.T) {
 	}
 	schemas := first["components"].(map[string]any)["schemas"].(map[string]any)
 	pinnedSchemas := pinned["components"].(map[string]any)["schemas"].(map[string]any)
+	// The only approved response-schema exceptions preserve released SDK nulls.
+	workflowProperties := pinnedSchemas["Workflow"].(map[string]any)["properties"].(map[string]any)
+	for name, kind := range map[string]string{"priority": "integer", "updatedAt": "string"} {
+		field := workflowProperties[name].(map[string]any)
+		field["type"] = []any{kind, "null"}
+		field["description"] = "Preserves SDK null values; nullable in Maestro, unlike the pinned Conductor snapshot."
+	}
 	for _, name := range []string{"Workflow", "Step", "Queue", "Schedule", "Event", "Notification", "StreamEntry", "WorkflowSearchBody", "WorkflowAggregatesBody", "StepAggregatesBody", "WorkflowAggregate", "StepAggregate", "ExportWorkflowOutputBody"} {
 		if !reflect.DeepEqual(schemas[name], pinnedSchemas[name]) {
 			t.Errorf("documented %s schema differs from pinned HTTP authority: got %v; want %v", name, schemas[name], pinnedSchemas[name])
 		}
 	}
-	disabled, _ := docsAcceptanceServer(t, false)
-	second := docsAcceptanceSpec(t, disabled)
-	for path := range second["paths"].(map[string]any) {
-		if strings.HasPrefix(path, "/v2/") {
-			t.Errorf("disabled server inherited v2 documentation for %s", path)
-		}
+	other, _ := docsAcceptanceServer(t, "other")
+	second := docsAcceptanceSpec(t, other)
+	if !reflect.DeepEqual(first["paths"], second["paths"]) {
+		t.Error("organization configuration changed the supported routes")
+	}
+	if !strings.Contains(second["info"].(map[string]any)["description"].(string), `"other"`) {
+		t.Error("second server inherited the first organization")
 	}
 	if after := docsAcceptanceSpec(t, enabled); !reflect.DeepEqual(first, after) {
 		t.Fatal("creating a second server changed the first server's documentation")
@@ -310,7 +318,7 @@ func TestDocsAcceptancePinnedSchemasAndServerIsolation(t *testing.T) {
 }
 
 func TestDocsAcceptanceSwaggerUsesLocalSpecification(t *testing.T) {
-	ts, _ := docsAcceptanceServer(t, false)
+	ts, _ := docsAcceptanceServer(t, "other")
 	response, err := ts.Client().Get(ts.URL + "/docs")
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +341,7 @@ func TestDocsAcceptanceSwaggerUsesLocalSpecification(t *testing.T) {
 func TestDocsAcceptanceConcurrentFirstSpecificationRequests(t *testing.T) {
 	for _, path := range []string{"/openapi.json", "/openapi-3.0.json", "/openapi.yaml", "/openapi-3.0.yaml"} {
 		t.Run(path, func(t *testing.T) {
-			ts, _ := docsAcceptanceServer(t, true)
+			ts, _ := docsAcceptanceServer(t, "local")
 			const readers = 16
 			start := make(chan struct{})
 			var ready sync.WaitGroup

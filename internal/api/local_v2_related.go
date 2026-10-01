@@ -16,8 +16,8 @@ import (
 
 var localV2AppName = regexp.MustCompile(`^[a-z0-9-_]+$`)
 
-func localV2RelatedRequest(w http.ResponseWriter, r *http.Request) (app, workflowID string, ok bool) {
-	if !localV2Allowed(w, r) || !localV2NoQuery(w, r) {
+func (s *Server) localV2RelatedRequest(w http.ResponseWriter, r *http.Request) (app, workflowID string, ok bool) {
+	if !s.localV2Allowed(w, r) || !localV2NoQuery(w, r) {
 		return "", "", false
 	}
 	app, workflowID = r.PathValue("app"), r.PathValue("id")
@@ -291,7 +291,7 @@ func localV2StreamRecord(raw json.RawMessage) (localV2StreamEntry, error) {
 }
 
 func (s *Server) localV2Events(w http.ResponseWriter, r *http.Request) {
-	app, workflowID, ok := localV2RelatedRequest(w, r)
+	app, workflowID, ok := s.localV2RelatedRequest(w, r)
 	if !ok {
 		return
 	}
@@ -317,7 +317,7 @@ func (s *Server) localV2Events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) localV2Notifications(w http.ResponseWriter, r *http.Request) {
-	app, workflowID, ok := localV2RelatedRequest(w, r)
+	app, workflowID, ok := s.localV2RelatedRequest(w, r)
 	if !ok {
 		return
 	}
@@ -343,7 +343,7 @@ func (s *Server) localV2Notifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) localV2Streams(w http.ResponseWriter, r *http.Request) {
-	app, workflowID, ok := localV2RelatedRequest(w, r)
+	app, workflowID, ok := s.localV2RelatedRequest(w, r)
 	if !ok {
 		return
 	}

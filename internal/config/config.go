@@ -3,15 +3,17 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 	"time"
 )
 
 // Config is the fully-resolved server configuration.
 type Config struct {
 	// ListenAddr is the HTTP listen address (the WebSocket endpoint, health
-	// check, and JSON API are all served here). Default ":8090" mirrors the
-	// port the DBOS docs use for self-hosted Conductor.
+	// check, and JSON API are all served here). Defaults to loopback port 8090.
 	ListenAddr string
 	// ConductorKey is ignored. Retained for compatibility with existing launchers;
 	// the gateway owns authentication for executor and HTTP connections.
@@ -21,24 +23,47 @@ type Config struct {
 	// answer within this window the dispatcher gives up on that socket (and may
 	// retry another executor of the same app).
 	RequestTimeout time.Duration
-	// LocalHTTPV2 exposes only a read-only, unauthenticated loopback test adapter.
-	LocalHTTPV2 bool
+	// OrgName is the single organization served by this deployment.
+	OrgName string
+	// AllowRemote lifts the listener and Conductor client loopback restriction for
+	// deployments behind a gateway. It does not provide authentication.
+	AllowRemote bool
 }
 
 // Load resolves configuration from environment variables, then lets command
 // line flags override. Call once at startup.
 func Load() Config {
 	cfg := Config{
-		ListenAddr:     envOr("CONDUCTOR_LISTEN_ADDR", ":8090"),
+		ListenAddr:     envOr("CONDUCTOR_LISTEN_ADDR", "127.0.0.1:8090"),
 		ConductorKey:   envOr("CONDUCTOR_DEV_KEY", "dev-key"),
 		RequestTimeout: 30 * time.Second,
+		OrgName:        envOr("CONDUCTOR_ORG_NAME", "local"),
 	}
-	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
-	flag.StringVar(&cfg.ConductorKey, "key", cfg.ConductorKey, "ignored compatibility option; authentication belongs to the gateway")
-	flag.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
-	flag.BoolVar(&cfg.LocalHTTPV2, "local-http-v2", false, "enable read-only local-org HTTP v2 adapter (loopback listener only)")
-	flag.Parse()
+	flags := flag.NewFlagSet("maestro", flag.ExitOnError)
+	flags.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
+	flags.StringVar(&cfg.ConductorKey, "key", cfg.ConductorKey, "ignored compatibility option; authentication belongs to the gateway")
+	flags.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
+	flags.StringVar(&cfg.OrgName, "org", cfg.OrgName, "single organization identifier (3-30 lowercase letters, digits or underscores)")
+	flags.BoolVar(&cfg.AllowRemote, "allow-remote", envBool("CONDUCTOR_ALLOW_REMOTE"), "allow non-loopback access behind an external gateway")
+	_ = flags.Parse(os.Args[1:])
+	if !regexp.MustCompile(`^[a-z0-9_]{3,30}$`).MatchString(cfg.OrgName) {
+		fmt.Fprintln(os.Stderr, "--org must contain 3-30 lowercase letters, digits or underscores")
+		os.Exit(2)
+	}
 	return cfg
+}
+
+func envBool(key string) bool {
+	raw, present := os.LookupEnv(key)
+	if !present {
+		return false
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, key+" must be boolean")
+		os.Exit(2)
+	}
+	return value
 }
 
 func envOr(key, def string) string {

@@ -327,7 +327,7 @@ def _workflow_time_epoch_ms(value):
 
 
 def validate_official_workflow(workflow, expected_sdk_digest):
-    """Validate one official Workflow against pinned OpenAPI and SDK conversion."""
+    """Validate pinned fields, the two approved null exceptions, and SDK values."""
     schema = _pinned_workflow_schema()
     required = set(schema["required"])
     properties = schema["properties"]
@@ -339,6 +339,8 @@ def validate_official_workflow(workflow, expected_sdk_digest):
         allowed = properties[field]["type"]
         if isinstance(allowed, str):
             allowed = [allowed]
+        if field in ("priority", "updatedAt"):
+            allowed = [*allowed, "null"]
         assert _matches_json_type(value, allowed), (
             f"Official Workflow.{field} violates pinned schema"
         )
@@ -875,7 +877,6 @@ def run_case(
                 f"127.0.0.1:{port}",
                 "--key",
                 key,
-                "--local-http-v2",
             ],
             cwd=ROOT,
             env=case_env,
@@ -1185,30 +1186,18 @@ def run_case(
                 + "/"
                 + urllib.parse.quote(workflow_id, safe=""),
             )
-            if workflow_status == 200:
-                assert content_type == "application/json", (
-                    "official direct-workflow content type"
-                )
-                validate_official_workflow(
-                    direct_workflow,
-                    (
-                        direct_workflow_without_blobs_digest
-                        if metadata_only
-                        else direct_workflow_digest
-                    ),
-                )
-            else:
-                validate_problem_response(
-                    workflow_status,
-                    content_type,
-                    direct_workflow,
-                    502,
-                    "official direct-workflow nullability boundary",
-                )
-                assert (
-                    "priority" in direct_workflow["detail"]
-                    or "updatedAt" in direct_workflow["detail"]
-                ), "official direct-workflow nullability contradiction detail"
+            assert workflow_status == 200, "SDK nullable workflow must remain readable"
+            assert content_type == "application/json", (
+                "official direct-workflow content type"
+            )
+            validate_official_workflow(
+                direct_workflow,
+                (
+                    direct_workflow_without_blobs_digest
+                    if metadata_only
+                    else direct_workflow_digest
+                ),
+            )
             for path, method, payload, label in (
                 (
                     official_workflows_root + "?status=SUCCESS&status=ERROR",

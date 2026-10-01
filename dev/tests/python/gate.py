@@ -118,8 +118,7 @@ def run(
         (temp / "sdk.log").open("w+") as sdk_log,
     ):
         server = subprocess.Popen(
-            [str(binary), "--listen", f"127.0.0.1:{port}", "--key", key]
-            + (["--local-http-v2"] if dbosctl_bin else []),
+            [str(binary), "--listen", f"127.0.0.1:{port}", "--key", key],
             cwd=ROOT,
             env=clean,
             stdout=subprocess.PIPE,

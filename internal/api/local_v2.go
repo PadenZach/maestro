@@ -16,14 +16,14 @@ import (
 )
 
 // localV2Allowed is defense in depth; startup separately checks the actual bound listener.
-func localV2Allowed(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) localV2Allowed(w http.ResponseWriter, r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	ip := net.ParseIP(host)
-	if err != nil || ip == nil || !ip.IsLoopback() {
+	if !s.cfg.AllowRemote && (err != nil || ip == nil || !ip.IsLoopback()) {
 		localV2Problem(w, 403, "local HTTP v2 requires a loopback client")
 		return false
 	}
-	if r.PathValue("org") != "local" {
+	if r.PathValue("org") != s.cfg.OrgName {
 		localV2Problem(w, 404, "organization not found")
 		return false
 	}
@@ -100,7 +100,7 @@ func (s *Server) readWorkflows(ctx context.Context, app string, b protocol.ListW
 	return resp.Output, nil
 }
 func (s *Server) localV2Get(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	query, queryErr := url.ParseQuery(r.URL.RawQuery)
@@ -117,6 +117,10 @@ func (s *Server) localV2Get(w http.ResponseWriter, r *http.Request) {
 		localV2Problem(w, 404, "workflow not found")
 		return
 	}
+	if row.WorkflowUUID != r.PathValue("id") {
+		localV2Failure(w, errors.New("invalid executor workflow output: inconsistent WorkflowUUID"))
+		return
+	}
 	v, err := localV2Workflow(*row)
 	if err != nil {
 		localV2Failure(w, err)
@@ -125,7 +129,7 @@ func (s *Server) localV2Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, v)
 }
 func (s *Server) localV2Steps(w http.ResponseWriter, r *http.Request) {
-	if !localV2Allowed(w, r) {
+	if !s.localV2Allowed(w, r) {
 		return
 	}
 	limit, offset, err := localV2Query(r)
@@ -143,6 +147,10 @@ func (s *Server) localV2Steps(w http.ResponseWriter, r *http.Request) {
 	}
 	if row == nil {
 		localV2Problem(w, 404, "workflow not found")
+		return
+	}
+	if row.WorkflowUUID != id {
+		localV2Failure(w, errors.New("invalid executor workflow output: inconsistent WorkflowUUID"))
 		return
 	}
 	steps, err := s.readSteps(r.Context(), app, id, true, limit, offset)
@@ -179,7 +187,7 @@ func localV2Time(s *string, name string, required bool) (any, error) {
 	}
 	// Checked range prevents overflow when converting milliseconds to nanoseconds.
 	sec, ms := n/1000, n%1000
-	if sec < -62135596800 || sec > 253402300799 {
+	if n < -62135596800000 || n > 253402300799999 {
 		return nil, fmt.Errorf("invalid executor %s: timestamp out of range", name)
 	}
 	return time.Unix(sec, ms*int64(time.Millisecond)).UTC().Format("2006-01-02T15:04:05.000Z07:00"), nil
@@ -207,6 +215,13 @@ func localV2Workflow(w protocol.WorkflowsOutput) (map[string]any, error) {
 	if !w.HasWasForkedFrom() {
 		return nil, errors.New("invalid executor WasForkedFrom: missing or null")
 	}
+	// The released SDK permits explicit nulls here. Preserve them rather than
+	// inventing defaults; a missing key is still a malformed response.
+	for _, field := range []string{"Priority", "UpdatedAt"} {
+		if !w.FieldPresent(field) {
+			return nil, fmt.Errorf("invalid executor workflow: missing %s", field)
+		}
+	}
 	out := map[string]any{"workflowId": w.WorkflowUUID, "status": *w.Status,
 		"workflowName": w.WorkflowName, "workflowClass": w.WorkflowClassName, "workflowConfig": w.WorkflowConfigName,
 		"user": w.AuthenticatedUser, "assumedRole": w.AssumedRole, "roles": w.AuthenticatedRoles,
@@ -221,7 +236,7 @@ func localV2Workflow(w protocol.WorkflowsOutput) (map[string]any, error) {
 		value    *string
 		required bool
 	}{
-		{"createdAt", w.CreatedAt, true}, {"updatedAt", w.UpdatedAt, true}, {"deadline", w.WorkflowDeadlineEpochMS, false}, {"dequeuedAt", w.DequeuedAt, false}, {"delayUntil", w.DelayUntilEpochMS, false}, {"completedAt", w.CompletedAt, false},
+		{"createdAt", w.CreatedAt, true}, {"updatedAt", w.UpdatedAt, false}, {"deadline", w.WorkflowDeadlineEpochMS, false}, {"dequeuedAt", w.DequeuedAt, false}, {"delayUntil", w.DelayUntilEpochMS, false}, {"completedAt", w.CompletedAt, false},
 	} {
 		out[field.name], err = localV2Time(field.value, field.name, field.required)
 		if err != nil {
@@ -232,7 +247,7 @@ func localV2Workflow(w protocol.WorkflowsOutput) (map[string]any, error) {
 		name     string
 		value    *string
 		required bool
-	}{{"priority", w.Priority, true}, {"timeoutMs", w.WorkflowTimeoutMS, false}} {
+	}{{"priority", w.Priority, false}, {"timeoutMs", w.WorkflowTimeoutMS, false}} {
 		out[field.name], err = localV2Number(field.value, field.name, field.required)
 		if err != nil {
 			return nil, err

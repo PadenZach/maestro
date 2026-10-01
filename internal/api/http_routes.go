@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -43,9 +44,11 @@ func (s *Server) httpAPI() huma.API {
 		"The [Console](/) serves HTML separately. Executors connect over WebSocket and answer server-initiated RPC requests; " +
 		"see the [executor protocol](https://github.com/zpaden/maestro/blob/main/docs/EXECUTOR_PROTOCOL.md). " +
 		"Authentication and deployment access policies belong to the external gateway."
-	if s.cfg.LocalHTTPV2 {
-		cfg.Info.Description += " The enabled /v2 routes are a loopback-only test adapter with org=local, " +
-			"derived from the pinned Conductor contract. They expose 14 read operations; full Conductor compatibility is not claimed."
+	cfg.Info.Description += fmt.Sprintf(" The /v2 routes serve organization %q, derived from the pinned Conductor contract. They expose 14 read operations; full Conductor compatibility is not claimed.", s.cfg.OrgName)
+	if s.cfg.AllowRemote {
+		cfg.Info.Description += " Remote access is enabled for deployment behind an external gateway."
+	} else {
+		cfg.Info.Description += " The listener and Conductor API clients must use loopback."
 	}
 	return humago.New(&documentationMux{ServeMux: s.mux}, cfg)
 }
@@ -109,9 +112,6 @@ func registerJSONRead[I, O any](api huma.API, path, id, summary string, handler 
 }
 
 func (s *Server) conductorRoutes(api huma.API) {
-	if !s.cfg.LocalHTTPV2 {
-		return
-	}
 	contract, err := apidocs.New(reference.ConductorOpenAPI)
 	if err != nil {
 		panic(err) // Embedded contract errors are programming errors.
@@ -144,4 +144,13 @@ func (s *Server) conductorRoutes(api huma.API) {
 	register(http.MethodGet, "/workflows/{workflowId}/events", s.localV2Events)
 	register(http.MethodGet, "/workflows/{workflowId}/notifications", s.localV2Notifications)
 	register(http.MethodGet, "/workflows/{workflowId}/streams", s.localV2Streams)
+	// Owner-approved SDK compatibility exceptions. Keep the pinned snapshot
+	// immutable and document the actual response without fabricating values.
+	workflow := api.OpenAPI().Components.Schemas.Map()["Workflow"].Extensions
+	properties := workflow["properties"].(map[string]any)
+	for name, kind := range map[string]string{"priority": "integer", "updatedAt": "string"} {
+		field := properties[name].(map[string]any)
+		field["type"] = []any{kind, "null"}
+		field["description"] = "Preserves SDK null values; nullable in Maestro, unlike the pinned Conductor snapshot."
+	}
 }

@@ -106,7 +106,7 @@ def run_child(real):
                 "-count=1",
                 "./internal/api",
                 "-run",
-                "^Test(LocalHTTPV2|DBOSCTL)",
+                "^Test(LocalHTTPV2|HTTPWorkflow|HTTPV2|DBOSCTL)",
                 "-v",
             ],
             env=env,

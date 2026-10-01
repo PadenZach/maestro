@@ -41,7 +41,7 @@ func inspectionExistingWorkflow(id any) map[string]any {
 
 func inspectionFixture(t *testing.T) (*fakeExec, string, *atomic.Int32) {
 	t.Helper()
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialScheduleFake(t, ts.URL, "inspection-exec", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflowAggregates: func(map[string]any) map[string]any {
@@ -351,7 +351,7 @@ func TestLocalHTTPV2InspectionResponseBoundaries(t *testing.T) {
 	}
 	for _, tc := range aggregateCases {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 				tc.command: func(map[string]any) map[string]any { return tc.payload },
 			})
@@ -371,7 +371,7 @@ func TestLocalHTTPV2InspectionResponseBoundaries(t *testing.T) {
 
 	// Wire nulls for unselected measures are omitted from the nonnullable,
 	// optional HTTP properties rather than changed into zero or JSON null.
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 		protocol.MsgGetWorkflowAggregates: func(map[string]any) map[string]any {
 			return map[string]any{"output": []any{map[string]any{"group": map[string]any{}, "count": nil, "min_created_at": nil, "max_queue_wait_ms": nil, "max_total_latency_ms": nil}}}
@@ -401,7 +401,7 @@ func TestLocalHTTPV2ExportMissingMalformedAndRefusal(t *testing.T) {
 		{"executor-refusal", map[string]any{"output": inspectionExistingWorkflow("wf-1")}, map[string]any{"error_message": "metadata-only mode refuses export"}, 502, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			var exportCalls atomic.Int32
 			dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 				protocol.MsgGetWorkflow:    func(map[string]any) map[string]any { return tc.existence },
@@ -419,7 +419,7 @@ func TestLocalHTTPV2ExportMissingMalformedAndRefusal(t *testing.T) {
 	}
 
 	t.Run("empty opaque export string", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		dialScheduleFake(t, ts.URL, "one", "3.1.0", map[protocol.MessageType]respondFn{
 			protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
 				return map[string]any{"output": inspectionExistingWorkflow(req["workflow_id"])}
@@ -436,7 +436,7 @@ func TestLocalHTTPV2ExportMissingMalformedAndRefusal(t *testing.T) {
 	})
 }
 
-func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
+func TestLocalHTTPV2InspectionCapabilitiesRetryAndUnavailable(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, method, body string
 		command                  protocol.MessageType
@@ -446,7 +446,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 		{"export", localV2ExportPath, http.MethodGet, "", protocol.MsgExportWorkflow},
 	} {
 		t.Run("attempt/"+tc.name, func(t *testing.T) {
-			ts, h := localV2Server(t, true)
+			ts, h := localV2Server(t)
 			var calls atomic.Int32
 			handlers := map[protocol.MessageType]respondFn{
 				protocol.MsgGetWorkflow: func(req map[string]any) map[string]any {
@@ -477,7 +477,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 			{"export", localV2ExportPath, http.MethodGet, "", protocol.MsgExportWorkflow, map[string]any{"serialized_workflow": "reviewed"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				ts, h := localV2Server(t, true)
+				ts, h := localV2Server(t)
 				var reviewedCalls, unknownCalls atomic.Int32
 				existence := func(req map[string]any) map[string]any {
 					return map[string]any{"output": inspectionExistingWorkflow(req["workflow_id"])}
@@ -506,7 +506,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 	})
 
 	t.Run("export metadata refusal is final", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var exportCalls atomic.Int32
 		for _, id := range []string{"one", "two"} {
 			dialScheduleFake(t, ts.URL, id, "3.1.0", map[protocol.MessageType]respondFn{
@@ -527,7 +527,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 	})
 
 	t.Run("aggregate disconnect retries another peer", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		handler := func(map[string]any) map[string]any {
 			if calls.Add(1) == 1 {
@@ -546,7 +546,7 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 	})
 
 	t.Run("executor error is final", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		for _, id := range []string{"one", "two"} {
 			dialScheduleFake(t, ts.URL, id, "3.1.0", map[protocol.MessageType]respondFn{
@@ -563,15 +563,15 @@ func TestLocalHTTPV2InspectionCapabilitiesRetryAndDefaultOff(t *testing.T) {
 		}
 	})
 
-	disabled, _ := localV2Server(t, false)
+	unavailable, _ := localV2Server(t)
 	for _, tc := range []struct{ path, method, body string }{
 		{localV2WorkflowAggregatesPath, http.MethodPost, `{}`},
 		{localV2StepAggregatesPath, http.MethodPost, `{}`},
 		{localV2ExportPath, http.MethodGet, ""},
 	} {
-		code, _, _ := localV2Request(t, disabled.URL+tc.path, tc.method, tc.body)
-		if code != 404 {
-			t.Errorf("default-off %s status=%d", tc.path, code)
+		code, _, _ := localV2Request(t, unavailable.URL+tc.path, tc.method, tc.body)
+		if code != 503 {
+			t.Errorf("unavailable %s status=%d", tc.path, code)
 		}
 	}
 }

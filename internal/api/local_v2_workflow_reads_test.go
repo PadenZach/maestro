@@ -10,7 +10,7 @@ import (
 )
 
 func TestLocalHTTPV2ListWorkflowsAndExpandedSearchOptions(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialFake(t, ts, "fixture-app", "testkey", "workflow-reader", map[protocol.MessageType]respondFn{
 		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -69,7 +69,7 @@ func jsonValuesEqual(actual, expected any) bool {
 }
 
 func TestLocalHTTPV2WorkflowSearchPreservesOmittedNullEmptyFalseAndZero(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialFake(t, ts, "fixture-app", "testkey", "workflow-semantics", map[protocol.MessageType]respondFn{
 		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -127,7 +127,7 @@ func TestLocalHTTPV2WorkflowSearchPreservesOmittedNullEmptyFalseAndZero(t *testi
 }
 
 func TestLocalHTTPV2WorkflowReadStrictRequestValidation(t *testing.T) {
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	var calls atomic.Int32
 	fe := dialFake(t, ts, "fixture-app", "testkey", "workflow-strict", map[protocol.MessageType]respondFn{
 		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -194,7 +194,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	expandedBody := `{"completedAfter":"2024-01-01T00:00:00Z","executorId":[],"wasForkedFrom":false}`
 
 	t.Run("expanded filters attempt unrecognized SDK", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		dialScheduleFake(t, ts.URL, "future", "3.1.1", map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -210,7 +210,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("expanded filters attempt other languages", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		dialScheduleConsoleFake(t, ts.URL, "fixture-app", "typescript", "typescript", "5.1", map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -226,7 +226,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("expanded filters allow mixed peers", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var reviewedCalls, unknownCalls atomic.Int32
 		dialScheduleFake(t, ts.URL, "unknown", "3.1.1", map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -248,7 +248,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("recent filters attempt unrecognized SDK", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		dialScheduleFake(t, ts.URL, "future", "3.1.1", map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -264,7 +264,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("reviewed legacy fields retain Python 2.24 compatibility", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		dialScheduleFake(t, ts.URL, "legacy", "2.24.0", map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -281,7 +281,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("executor refusal is final", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		for _, id := range []string{"one", "two"} {
 			dialScheduleFake(t, ts.URL, id, "3.1.0", map[protocol.MessageType]respondFn{
@@ -299,7 +299,7 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 
 	t.Run("pure read disconnect retries another peer", func(t *testing.T) {
-		ts, h := localV2Server(t, true)
+		ts, h := localV2Server(t)
 		var calls atomic.Int32
 		handlers := map[protocol.MessageType]respondFn{
 			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
@@ -320,14 +320,14 @@ func TestLocalHTTPV2WorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
 	})
 }
 
-func TestLocalHTTPV2ListWorkflowsDefaultOffAndNullOutput(t *testing.T) {
-	ts, _ := localV2Server(t, false)
+func TestLocalHTTPV2ListWorkflowsUnavailableAndNullOutput(t *testing.T) {
+	ts, _ := localV2Server(t)
 	code, _, _ := localV2Request(t, ts.URL+localV2WorkflowRoot, "GET", "")
-	if code != 404 {
-		t.Fatalf("default-off GET list status=%d", code)
+	if code != 503 {
+		t.Fatalf("unavailable GET list status=%d", code)
 	}
 
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	dialFake(t, ts, "fixture-app", "testkey", "null-list", map[protocol.MessageType]respondFn{
 		protocol.MsgListWorkflows: func(map[string]any) map[string]any { return map[string]any{"output": nil} },
 	})

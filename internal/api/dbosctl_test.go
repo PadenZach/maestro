@@ -99,12 +99,12 @@ func TestDBOSCTLReadMatrix(t *testing.T) {
 }
 
 func TestDBOSCTLUnavailableAndRefusal(t *testing.T) {
-	ts, _ := localV2Server(t, true)
+	ts, _ := localV2Server(t)
 	code, out := runDBOSCTL(t, ts.URL, "get", "wf-1")
 	if code != 1 || !strings.Contains(out, "unavailable") {
 		t.Fatalf("503: %d %s", code, out)
 	}
-	ts, h := localV2Server(t, true)
+	ts, h := localV2Server(t)
 	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
 		return map[string]any{"error_message": "private executor refusal"}
 	}})
