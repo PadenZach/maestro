@@ -33,7 +33,7 @@
         {{else}}<span class="tl-fold-space" aria-hidden="true"></span>{{end}}
         <span class="tl-status tl-{{.StatusClass}}">{{if eq .StatusClass "err"}}✕{{else if eq .StatusClass "running"}}◷{{else}}✓{{end}}</span>
         <button type="button" class="tl-name step-inspection" data-step-workflow="{{$.WorkflowID}}" data-step-id="{{.StepID}}"
-                data-selection-key="step:{{.Key}}" data-inspect-url="{{workflowURL $.App $.WorkflowID}}/inspect?step={{.StepID}}"
+                data-selection-key="step:{{.Key}}" data-inspect-url="{{workflowURL $.App $.WorkflowID}}/inspect?step={{.StepID}}{{if $.PageOffset}}&amp;offset={{$.PageOffset}}{{end}}"
                 data-inspect-label="Step {{.StepID}} · {{.Name}}" aria-controls="workflow-drawer"
                 :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey" @click="inspect($el)">
           {{.Name}} <span class="subtle">[{{.StepID}}]</span>
@@ -64,5 +64,7 @@
     {{end}}
   </div>
   {{end}}
+  {{if .MoreURL}}<div class="tl-notice"><button type="button" class="btn" hx-get="{{.MoreURL}}" hx-target="closest .tl-notice" hx-swap="outerHTML">Load more recorded steps</button> <span class="subtle">Timing is shown in the initial page’s window.</span></div>{{end}}
+  {{if .Limited}}<p class="tl-notice subtle">Step limit reached. This timeline is incomplete.</p>{{end}}
 </div>
 {{end}}

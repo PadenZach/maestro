@@ -253,7 +253,7 @@ async function refreshDuringInspection(page, base) {
 async function independentBranches(page, base) {
   await page.goto(`${base}/apps/browser/workflows/shared`);
   const rootStep = page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="1"]');
-  const branches = page.locator('#wf-live > div > .timeline > .timeline-rows > .child-branch');
+  const branches = page.locator('#timeline-panel > .timeline > .timeline-rows > .child-branch');
   await rootStep.press('Enter');
   await refreshDetails(page);
   await expectSelection(page, 'shared', 1);

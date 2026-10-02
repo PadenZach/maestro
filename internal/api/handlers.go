@@ -125,11 +125,12 @@ type detailData struct {
 }
 
 type detailLive struct {
-	App       string
-	WF        *protocol.WorkflowsOutput
-	Timeline  web.Timeline
-	IsRunning bool
-	Flash     string
+	App           string
+	WF            *protocol.WorkflowsOutput
+	Timeline      web.Timeline
+	IsRunning     bool
+	Flash         string
+	TimelineError string
 }
 
 type queuesData struct {
@@ -390,7 +391,9 @@ func (s *Server) handleWorkflowLive(w http.ResponseWriter, r *http.Request) {
 // buildDetailLive fetches the workflow header + steps and assembles the pollable
 // live region (status, actions, gantt timeline).
 func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (detailLive, error) {
-	wf, err := s.readWorkflow(ctx, app, id, true, true)
+	ctx, cancel := context.WithTimeout(ctx, flowReadTimeout)
+	defer cancel()
+	wf, err := s.readWorkflow(ctx, app, id, false, false)
 	if err != nil {
 		return detailLive{}, err
 	}
@@ -398,16 +401,20 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 		return detailLive{}, fmt.Errorf("workflow %q not found", id)
 	}
 
-	steps, err := s.readSteps(ctx, app, id, true, nil, nil)
+	steps, more, err := s.readTimelinePage(ctx, app, id, 0)
+	tl := web.BuildTimeline(app, id, steps)
+	setTimelinePage(&tl, 0, more, "", nil)
+	timelineError := ""
 	if err != nil {
-		return detailLive{}, err
+		timelineError = htmlErrorText(err)
 	}
 	return detailLive{
-		App:       app,
-		WF:        wf,
-		Timeline:  web.BuildTimeline(app, id, steps),
-		IsRunning: isRunning(wf.Status),
-		Flash:     flash,
+		App:           app,
+		WF:            wf,
+		Timeline:      tl,
+		TimelineError: timelineError,
+		IsRunning:     isRunning(wf.Status),
+		Flash:         flash,
 	}, nil
 }
 
@@ -415,6 +422,17 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 	app := r.PathValue("app")
 	id := r.PathValue("id")
 	query := r.URL.Query()
+	offset, offsetErr := flowOffset(query)
+	if offsetErr != nil {
+		partialError(w, offsetErr)
+		return
+	}
+	if len(query["ancestor"]) > 8 {
+		partialMessage(w, "Timeline depth limit reached. Open this workflow to continue.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), flowReadTimeout)
+	defer cancel()
 	starts, hasStart := query["window_start"]
 	ends, hasEnd := query["window_end"]
 	var start, end int64
@@ -431,7 +449,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	wf, err := s.readWorkflow(r.Context(), app, id, false, false)
+	wf, err := s.readWorkflow(ctx, app, id, false, false)
 	if err != nil {
 		partialError(w, err)
 		return
@@ -447,7 +465,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	steps, err := s.readSteps(r.Context(), app, id, true, nil, nil)
+	steps, more, err := s.readTimelinePage(ctx, app, id, offset)
 	if err != nil {
 		partialError(w, err)
 		return
@@ -460,6 +478,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 	}
 	tl.ChildStatus = deref(wf.Status)
 	web.SetTimelineBranch(&tl, query.Get("branch"), ancestors)
+	setTimelinePage(&tl, offset, more, query.Get("branch"), ancestors)
 	s.web.Partial(w, "timeline_rows", tl)
 }
 

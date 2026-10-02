@@ -64,6 +64,10 @@ document.addEventListener("alpine:init", () => {
   // retained across swaps; payloads are never stored in browser persistence.
   Alpine.data("workflowInspector", () => ({
     inspectorRoot: null,
+    view: "timeline",
+    reportedStatusKnown: false,
+    reportedStatus: null,
+    reportedStatusStale: false,
     expanded: {},
     drawerOpen: false,
     selection: null,
@@ -84,6 +88,15 @@ document.addEventListener("alpine:init", () => {
         }
       });
       this.loadInspection();
+    },
+    selectView(view) {
+      this.view = view;
+      this.$dispatch("workflow-view-change", { view });
+    },
+    reportedStatusClass() {
+      const status = this.reportedStatus;
+      return status === "SUCCESS" ? "ok" : ["ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED", "CANCELLED"].includes(status) ? "err"
+        : ["PENDING", "ENQUEUED", "DELAYED"].includes(status) ? "running" : "muted";
     },
     async loadInspection() {
       if (!this.drawerOpen || !this.selection) return;
@@ -109,6 +122,7 @@ document.addEventListener("alpine:init", () => {
       }
     },
     refresh(event) {
+      if (event.detail.target.id === "wf-live") this.reportedStatusKnown = false;
       // A slow read must be allowed to finish even when the timeline polls.
       if (event.detail.target.id === "wf-live" && this.drawerOpen && !this.loading) this.loadInspection();
     },

@@ -87,6 +87,9 @@ func FormatDuration(ms int64) string {
 // window [T0,T1], axis ticks, and one bar per step. Geometry is computed here
 // (not in templates) so it is unit-testable.
 type Timeline struct {
+	PageOffset  int
+	MoreURL     string
+	Limited     bool
 	ChildStatus string
 	Depth       int
 	StartMS     int64

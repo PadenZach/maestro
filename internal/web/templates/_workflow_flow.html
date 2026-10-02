@@ -1,0 +1,113 @@
+{{define "workflow_flow"}}
+<section id="flow-panel" class="flow-panel" role="tabpanel" aria-labelledby="flow-tab" x-cloak x-show="view === 'flow'"
+         x-data="workflowFlow" data-workflow-id="{{.WF.WorkflowUUID}}" data-workflow-base="{{applicationURL .App}}/workflows/"
+         @keydown.escape.window="expandedEscape($event)" @keydown.tab.window="expandedTab($event)">
+  <div class="flow-surface" x-ref="surface" :class="{'flow-expanded': expandedGraph}" :role="expandedGraph ? 'dialog' : null"
+       :aria-label="expandedGraph ? 'Expanded workflow execution map' : null" :aria-modal="expandedGraph ? 'true' : null"
+       :aria-owns="expandedGraph &amp;&amp; drawerOpen ? 'workflow-drawer' : null">
+    <div class="flow-toolbar">
+      <h2>Recorded execution</h2>
+      <div class="flow-controls">
+        <button type="button" class="btn" :aria-pressed="failureFocus" @click="toggleFocus()">Focus on failures</button>
+        <button type="button" class="btn" :disabled="busy" @click="refreshFlow(true)" x-text="busy ? 'Loading…' : 'Refresh flow'">Refresh flow</button>
+        <button type="button" class="btn flow-expand" x-show="!expandedGraph" @click="expandGraph($el)">Expand</button>
+        <button type="button" class="btn flow-close-expanded" x-ref="closeExpanded" x-show="expandedGraph" @click="closeExpanded()">Close expanded view</button>
+      </div>
+    </div>
+    <details class="flow-help">
+      <summary>Details</summary>
+      <div class="flow-legend" aria-label="Connection types">
+        <span><i class="flow-line" aria-hidden="true"></i>Invocation</span>
+        <span><i class="flow-line return" aria-hidden="true"></i>Result return</span>
+        <span><i class="flow-line error" aria-hidden="true"></i>Recorded error return</span>
+        <span><i class="flow-line reference" aria-hidden="true"></i>Reference</span>
+      </div>
+      <div class="flow-progress" role="status" aria-live="polite">
+        <span x-text="loadedCount + ' workflows · ' + stepCount + ' discovered steps'"></span>
+        <span x-show="lastRefresh" x-text="'Statuses refreshed ' + stamp(lastRefresh)"></span>
+      </div>
+      <p class="subtle">Click a workflow to expand its steps, or a connection to inspect its recorded operation. A child error does not establish that its parent failed. Step order does not imply sequential execution.</p>
+      <p class="subtle">Failure focus keeps connected context. Workflows whose steps have not been loaded may contain other failures. View limits: 25 workflows, 8 levels, 1,000 steps.</p>
+      <ul class="flow-summaries">
+        <template x-for="node in visibleNodes" :key="node.id"><li x-text="node.name + ': ' + summary(node)"></li></template>
+      </ul>
+    </details>
+    <p class="flash err" x-show="message" x-text="message" role="status"></p>
+    <p class="flow-focus-note" x-show="failureFocus" role="status"
+       x-text="failedCount + ' failed workflows · ' + errorCount + ' recorded step errors'"></p>
+    <div class="flow-viewport" tabindex="0" role="region" aria-label="Workflow execution map; scroll horizontally to explore">
+      <div class="flow-board" x-ref="board">
+        <svg class="flow-connections" :width="canvasWidth" :height="canvasHeight" role="group" aria-label="Workflow connections">
+          <defs aria-hidden="true">
+            <marker id="flow-arrow-call" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" class="flow-arrow-call"/></marker>
+            <marker id="flow-arrow-return" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" class="flow-arrow-return"/></marker>
+            <marker id="flow-arrow-error" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" class="flow-arrow-error"/></marker>
+            <marker id="flow-arrow-reference" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" class="flow-arrow-reference"/></marker>
+          </defs>
+          <g x-ref="connections"></g>
+        </svg>
+        <div class="flow-lanes">
+          <template x-for="lane in lanes" :key="lane.depth">
+            <div class="flow-lane">
+              <template x-for="node in lane.nodes" :key="node.id">
+                <article class="flow-node" tabindex="-1" :data-flow-node="node.id" :class="{'flow-failed': MaestroFlow.failed(node.status), 'flow-placeholder': !node.loaded, 'flow-stale': node.stale, 'flow-expandable': node.loaded &amp;&amp; !node.metadataError}"
+                         @click="toggleCard(node, $event)"
+                         :aria-label="'Workflow ' + node.id">
+                  <div class="flow-node-head">
+                    <span class="flow-node-kind" x-show="node.id === rootID">Selected workflow</span>
+                    <button type="button" class="flow-name flow-card-toggle" x-show="node.loaded" :disabled="busy || !!node.metadataError"
+                            :aria-label="(node.collapsed ? 'Show steps for ' : 'Hide steps for ') + node.name"
+                            :aria-expanded="!node.collapsed" @click="toggleNode(node)">
+                      <span x-text="node.name"></span><span class="flow-chevron" :class="{'is-open': !node.collapsed}" aria-hidden="true"></span>
+                    </button>
+                    <span class="flow-name" x-show="!node.loaded" x-text="node.id"></span>
+                    <div class="flow-node-identity" x-show="node.loaded" x-text="node.id"></div>
+                    <div class="flow-node-status">
+                      <span class="badge" :class="statusClass(node.status)" x-text="node.status || (node.state === 'unloaded' ? 'Loading…' : node.state === 'missing' ? 'Not found' : node.loaded ? 'Unknown status' : 'Unavailable')"></span>
+                      <span class="flow-stale-label" x-show="node.stale">Stale</span>
+                      <a :href="node.workflowUrl" :aria-label="'Open workflow ' + node.id" title="Open workflow">↗</a>
+                    </div>
+                    <a class="flow-parent" x-show="node.parentId" :href="node.parentId ? url(node.parentId) : '#'" x-text="'Parent: ' + node.parentId"></a>
+                  </div>
+                  <p class="flow-node-notice" x-show="node.error" x-text="node.error" role="status"></p>
+                  <p class="flow-node-notice" x-show="node.referenceLimit" x-text="node.referenceLimit" role="status"></p>
+                  <div class="flow-node-actions" x-show="node.error">
+                    <button type="button" class="btn flow-retry" x-show="node.error" :disabled="busy" @click="retryNode(node)">Retry</button>
+                  </div>
+                  <div x-show="node.detailsLoaded &amp;&amp; !node.collapsed">
+                    <ol class="flow-steps">
+                      <template x-for="step in node.steps" :key="step.key">
+                        <li class="flow-step" :data-flow-step="step.key" :class="{'flow-step-error': step.hasError}">
+                          <div class="flow-step-label">
+                            <span class="flow-step-symbol" :aria-label="step.hasError ? 'Recorded error' : step.errorKnown ? 'Recorded step' : 'Recorded step; error evidence unavailable'" x-text="step.hasError ? '✕' : '·'"></span>
+                            <button type="button" class="flow-step-inspect" :disabled="step.id == null"
+                                    :title="!step.errorKnown &amp;&amp; !step.hasError ? 'Inspect step; error evidence unavailable' : 'Inspect step'"
+                                    :data-selection-key="'flow-step:' + node.id + ':' + step.key" :data-inspect-url="step.inspectUrl"
+                                    :data-inspect-label="'Step ' + step.id + ' in ' + node.id" aria-controls="workflow-drawer"
+                                    :aria-expanded="drawerOpen &amp;&amp; selection?.key === 'flow-step:' + node.id + ':' + step.key"
+                                    @click="inspect($el)"><span x-text="step.name || 'Unnamed operation'"></span><span class="subtle" x-text="step.id == null ? 'unknown ID' : '[' + step.id + ']'"></span></button>
+                          </div>
+                          <span class="flow-error-label" x-show="step.hasError">Recorded error</span>
+                          <div class="flow-reference" x-show="step.childWorkflowId" :class="{'flow-return': step.relationship === 'return'}">
+                            <button type="button" @click="follow(step.childWorkflowId)" x-text="referenceLabel(node, step)"></button>
+                          </div>
+                        </li>
+                      </template>
+                    </ol>
+                    <p class="flow-node-notice subtle" x-show="!node.steps.length &amp;&amp; !node.error">No steps recorded.</p>
+                    <div class="flow-node-more" x-show="node.hasMore || node.limited">
+                      <button type="button" class="btn" x-show="node.hasMore &amp;&amp; !node.limited" :disabled="busy || stepCount >= MaestroFlow.limits.steps" @click="loadNode(node, node.nextOffset)">Load more steps</button>
+                      <span x-show="node.limited">Step limit reached. This workflow is incomplete.</span>
+                    </div>
+                  </div>
+                  <div class="flow-node-updated" x-show="node.stale" x-text="'Records refreshed ' + stamp(node.readAt)"></div>
+                </article>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{{end}}

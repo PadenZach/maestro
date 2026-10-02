@@ -10,13 +10,15 @@
         aria-controls="workflow-drawer" :aria-expanded="drawerOpen &amp;&amp; selection?.key === $el.dataset.selectionKey"
         @click="inspect($el)">{{derefOr $d.Live.WF.WorkflowName $d.Live.WF.WorkflowUUID}}</button></h1>
     <div class="detail-sub mono">{{$d.Live.WF.WorkflowUUID}}</div>
-    <div class="detail-sub subtle">{{derefOr $d.Live.WF.CreatedAt ""}}</div>
+    <div class="detail-sub subtle" title="{{deref $d.Live.WF.CreatedAt}}">{{workflowCreatedUTC $d.Live.WF.CreatedAt}} UTC</div>
   </div>
 </div>
 
 <div id="wf-live">
   {{template "detail_live" $d.Live}}
 </div>
+
+{{template "workflow_flow" $d.Live}}
 
 <section class="panel">
   <h2>Input / Output</h2>
