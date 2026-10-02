@@ -22,6 +22,7 @@ jobs:
     permissions:
       contents: write
       packages: read
+      attestations: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASE_TAG: ${{ inputs.tag }}

@@ -156,6 +156,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      attestations: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       IMAGE_REPOSITORY: ${{ needs.candidate.outputs.repository }}
