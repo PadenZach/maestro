@@ -2,6 +2,7 @@
 
 import importlib.util
 import hashlib
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -174,6 +175,19 @@ class ReleaseTests(unittest.TestCase):
                     release.verify_binary(binary, "linux", "arm64", REVISION)
                 with self.assertRaisesRegex(ValueError, "missing revision"):
                     release.verify_binary(binary, "linux", "amd64", "c" * 40)
+
+    def test_platform_digest_ignores_attestations_and_selects_exact_architecture(self):
+        amd64, arm64 = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+        index = {"manifests": [
+            {"digest": amd64, "platform": {"os": "linux", "architecture": "amd64"}},
+            {"digest": arm64, "platform": {"os": "linux", "architecture": "arm64"}},
+            {"digest": DIGEST, "platform": {"os": "unknown", "architecture": "unknown"}},
+        ]}
+        with patch.object(release, "output", return_value=json.dumps(index)):
+            self.assertEqual(release.platform_digest("ghcr.io/example/app", DIGEST, "amd64"), amd64)
+            self.assertEqual(release.platform_digest("ghcr.io/example/app", DIGEST, "arm64"), arm64)
+            with self.assertRaisesRegex(ValueError, "Expected one Linux"):
+                release.platform_digest("ghcr.io/example/app", DIGEST, "arm")
 
     def test_notes_link_every_download_and_the_tagged_image(self):
         notes = release.release_notes("example/app", "ghcr.io/example/app", "0.2.0")

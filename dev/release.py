@@ -29,7 +29,7 @@ def run(*args, **kwargs):
 
 
 def output(*args):
-    return run(*args, capture_output=True).stdout.strip()
+    return run(*args, stdout=subprocess.PIPE).stdout.strip()
 
 
 def version_key(value):
@@ -183,6 +183,16 @@ def verify_binary(binary, system, arch, revision):
         raise ValueError(f"Binary for {system}/{arch} is missing revision {revision}")
 
 
+def platform_digest(repository, digest, arch):
+    index = json.loads(output("docker", "buildx", "imagetools", "inspect", "--raw", f"{repository}@{digest}"))
+    matches = [item["digest"] for item in index["manifests"]
+               if item.get("platform", {}).get("os") == "linux"
+               and item["platform"].get("architecture") == arch]
+    if len(matches) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", matches[0]):
+        raise ValueError(f"Expected one Linux {arch} image in {repository}@{digest}")
+    return matches[0]
+
+
 def build_assets(repository, digest, current, revision):
     destination = ROOT / "dist" / "release"
     destination.mkdir(parents=True, exist_ok=True)
@@ -193,8 +203,10 @@ def build_assets(repository, digest, current, revision):
             binary = Path(scratch) / ("maestro.exe" if system == "windows" else "maestro")
             if system == "linux":
                 # Extract the bytes already scanned and tested in CI; never rebuild the image.
+                # Separate manifest digests also work with Docker's classic image store.
+                platform = platform_digest(repository, digest, arch)
                 container = output("docker", "create", "--platform", f"linux/{arch}",
-                                   "--pull=always", f"{repository}@{digest}")
+                                   "--pull=always", f"{repository}@{platform}")
                 try:
                     run("docker", "cp", f"{container}:/maestro", str(binary))
                 finally:
