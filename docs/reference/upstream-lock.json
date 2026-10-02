@@ -1,11 +1,13 @@
 {
   "schema_version": 1,
   "reviewed_on": "2026-09-25",
-  "verification_level": "source-reviewed; selected Python 2.24.0/2.31.1/3.1.0 real-SDK SQLite boundary passed locally; full SDK feature breadth unverified",
+  "verification_level": "source-reviewed; selected supported Python 2.31.1/3.1.0 real-SDK SQLite boundary passed locally; full SDK feature breadth unverified",
   "python": {
     "repository": "https://github.com/dbos-inc/dbos-transact-py",
-    "baseline": {"tag": "2.24.0", "commit": "186987aa339c5b2bdd0f73e12951ecebec228730"},
-    "transitional": {"tag": "2.31.1", "commit": "4dea06237efc02585ffdc9955dd7b4b78617d82b"},
+    "supported_series": ["2.31.x", "3.x"],
+    "minimum_supported": "2.31.0",
+    "historical_baseline": {"tag": "2.24.0", "commit": "186987aa339c5b2bdd0f73e12951ecebec228730"},
+    "baseline": {"tag": "2.31.1", "commit": "4dea06237efc02585ffdc9955dd7b4b78617d82b"},
     "current": {
       "tag": "3.1.0",
       "commit": "84715a3633316a3d62479516fb8d432245f5a172",

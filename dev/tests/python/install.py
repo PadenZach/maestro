@@ -115,7 +115,7 @@ def main():
         if len(installed) != 1:
             raise RuntimeError("isolated CPython 3.12.9 was not installed")
         python = installed[0]
-        for release in ("2.24.0", "2.31.1", "3.1.0"):
+        for release in ("2.31.1", "3.1.0"):
             subprocess.run(
                 [
                     uv,

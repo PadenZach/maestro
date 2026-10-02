@@ -86,7 +86,7 @@ trivy fs --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 "$
 tools = { trivy = "0.74.0" }
 
 [tasks."sdk:test"]
-description = "Test latest stable DBOS Python 2.x and 3.x (or DBOS_SDK_MAJOR)"
+description = "Test latest stable DBOS Python 2.31.x and 3.x (or DBOS_SDK_MAJOR)"
 run = "python3 -B dev/tests/python/latest.py"
 tools = { uv = "0.12.21" }
 

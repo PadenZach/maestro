@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSIONS = ("2.24.0", "2.31.1", "3.1.0")
+VERSIONS = ("2.31.1", "3.1.0")
 DEADLINE = 65
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -76,6 +76,8 @@ def run(
     *,
     python=None,
 ):
+    if not (version.startswith("2.31.") or version.startswith("3.")):
+        raise ValueError("supported DBOS Python releases are 2.31.x and 3.x")
     temp.mkdir(mode=0o700)
     python = python or ROOT / "dev/tests/python" / version / ".venv/bin/python"
     if not python.is_file():
@@ -218,11 +220,10 @@ def run(
                     assert actual_hash == expected_hash, (
                         f"JSON {field} blob differs from SDK"
                     )
-            if version != "2.24.0":
-                assert json.loads(detail["Attributes"]) == {"gate": "visible"}, (
-                    "recent Attributes JSON string"
-                )
-                assert detail["ApplicationName"] == app, "recent ApplicationName"
+            assert json.loads(detail["Attributes"]) == {"gate": "visible"}, (
+                "recent Attributes JSON string"
+            )
+            assert detail["ApplicationName"] == app, "recent ApplicationName"
             if dbosctl_bin:
                 # Unmodified external client against ordinary SDK-persisted rows.
                 # This is separate from the fake-peer CLI/schema matrix.
@@ -293,29 +294,28 @@ def run(
             )
             status, queue = request(api, prefix + "/queues/gate-queue")
             assert status == 200 and queue["name"] == "gate-queue", "get queue"
-            assert queue["concurrency"] == (2 if version == "2.24.0" else 3)
-            assert queue["worker_concurrency"] == (1 if version == "2.24.0" else 2)
+            assert queue["concurrency"] == 3
+            assert queue["worker_concurrency"] == 2
             assert (
                 queue["rate_limit_max"] == 5 and queue["rate_limit_period_sec"] == 1.0
             ), "queue rate"
-            if version != "2.24.0":
-                assert queue["application_name"] == app, "recent queue app"
-                assert (
-                    queue["partition_concurrency"] == 2
-                    and queue["partition_worker_concurrency"] == 1
-                ), "recent queue partition limits"
-                assert (
-                    queue["partition_rate_limit_max"] == 4
-                    and queue["partition_rate_limit_period_sec"] == 2.0
-                ), "recent queue partition rate"
-                scheduled_id = ready["scheduled_workflow_id"]
-                status, scheduled = request(
-                    api,
-                    prefix + "/workflows/" + urllib.parse.quote(scheduled_id, safe=""),
-                )
-                assert status == 200 and scheduled["ScheduleName"] == "gate-schedule", (
-                    "recent non-null ScheduleName"
-                )
+            assert queue["application_name"] == app, "recent queue app"
+            assert (
+                queue["partition_concurrency"] == 2
+                and queue["partition_worker_concurrency"] == 1
+            ), "recent queue partition limits"
+            assert (
+                queue["partition_rate_limit_max"] == 4
+                and queue["partition_rate_limit_period_sec"] == 2.0
+            ), "recent queue partition rate"
+            scheduled_id = ready["scheduled_workflow_id"]
+            status, scheduled = request(
+                api,
+                prefix + "/workflows/" + urllib.parse.quote(scheduled_id, safe=""),
+            )
+            assert status == 200 and scheduled["ScheduleName"] == "gate-schedule", (
+                "recent non-null ScheduleName"
+            )
             if version.startswith("2."):
                 assert app_proc.stdin is not None
                 ack = temp / "injection-ack"
