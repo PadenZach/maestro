@@ -48,29 +48,4 @@ func TestWorkflowReadOptionsWireAndCapabilities(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("workflow options wire = %#v; want %#v", got, want)
 	}
-	features, err := RequiredFeatures(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(features) != 0 {
-		t.Fatalf("workflow options must not depend on SDK identity: %v", features)
-	}
-}
-
-func TestOrdinaryWorkflowListFieldsNeedNoAdditiveCapability(t *testing.T) {
-	limit := 1
-	request := ListWorkflowsRequest(ListWorkflowsBody{
-		WorkflowUUIDs: []string{"wf"}, WorkflowName: []string{"job"},
-		AuthenticatedUser: []string{"alice"}, StartTime: "2024-01-01T00:00:00Z",
-		EndTime: "2025-01-01T00:00:00Z", Status: []string{"SUCCESS"},
-		ApplicationVer: []string{"v1"}, QueueName: []string{"queue"},
-		Limit: &limit, SortDesc: true, LoadInput: true, LoadOutput: true, QueuesOnly: true,
-	})
-	features, err := RequiredFeatures(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(features) != 0 {
-		t.Fatalf("ordinary workflow list fields gained capability requirements: %v", features)
-	}
 }

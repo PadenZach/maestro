@@ -24,10 +24,6 @@ var ErrAppUnavailable = errors.New("conductor: application unavailable")
 
 var ErrHubClosed = errors.New("conductor: hub closed")
 
-// ErrUnsupportedCapability indicates that no connected peer is reviewed for
-// the requested mutation. Reads do not use SDK-version capability gates.
-var ErrUnsupportedCapability = errors.New("conductor: unsupported executor capability")
-
 // Hub indexes live executor connections by application name.
 type Hub struct {
 	log            *slog.Logger
@@ -208,17 +204,6 @@ func (h *Hub) deregister(c *Conn) {
 	h.log.Info("executor disconnected", "app", c.app, "executor_id", id)
 }
 
-// Pick returns a live connection for the named app. Selection is trivial today
-// (first available); the dispatcher (Request) layers retry on top.
-func (h *Hub) Pick(app string) (*Conn, bool) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for c := range h.apps[app] {
-		return c, true
-	}
-	return nil, false
-}
-
 // conns snapshots the live connections for an app so the dispatcher can iterate
 // candidates without holding the hub lock during a round-trip.
 func (h *Hub) conns(app string) []*Conn {
@@ -269,8 +254,7 @@ func (h *Hub) request(ctx context.Context, app string, version *string, req prot
 	if len(candidates) == 0 {
 		return nil, ErrAppUnavailable
 	}
-	features, err := protocol.RequiredFeatures(req)
-	if err != nil {
+	if err := req.Validate(); err != nil {
 		return nil, err
 	}
 	// The open Request map also accepts MessageType values, which encode as
@@ -282,24 +266,7 @@ func (h *Hub) request(ctx context.Context, app string, version *string, req prot
 		req = copy
 	}
 	var lastErr error
-	eligible := false
 	for _, c := range candidates {
-		c.mu.Lock()
-		executor := c.executor
-		c.mu.Unlock()
-		supported := executor != nil
-		if supported {
-			for _, feature := range features {
-				if !protocol.SupportsFeature(executor.Language, executor.DBOSVersion, feature) {
-					supported = false
-					break
-				}
-			}
-		}
-		if !supported {
-			continue
-		}
-		eligible = true
 		rctx, cancel := context.WithTimeout(ctx, h.requestTimeout)
 		resp, err := c.roundtrip(rctx, req)
 		cancel()
@@ -313,9 +280,6 @@ func (h *Hub) request(ctx context.Context, app string, version *string, req prot
 			continue
 		}
 		return nil, err
-	}
-	if !eligible {
-		return nil, ErrUnsupportedCapability
 	}
 	return nil, lastErr
 }

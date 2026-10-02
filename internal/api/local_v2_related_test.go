@@ -330,6 +330,7 @@ func TestLocalHTTPV2RelatedDistinguishesMissingWorkflow(t *testing.T) {
 		{name: "non-object-output", body: map[string]any{"output": []any{}}, status: 502},
 		{name: "missing-workflow-id", body: map[string]any{"output": map[string]any{"Status": "SUCCESS"}}, status: 502},
 		{name: "wrong-workflow-id-type", body: map[string]any{"output": map[string]any{"WorkflowUUID": 7}}, status: 502},
+		{name: "mismatched-workflow-id", body: map[string]any{"output": relatedExistingWorkflow("another-workflow")}, status: 502},
 	}
 	for _, suffix := range []string{"events", "notifications", "streams"} {
 		for _, response := range responses {

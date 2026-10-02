@@ -151,10 +151,10 @@ type overviewPanel struct {
 // One bounded cache per server coalesces identical reads; successful snapshots
 // survive read failures and disconnects. No workflow records are persisted.
 type overviewCacheEntry struct {
-	data             overviewPanel
-	success, attempt time.Time
-	err              error
-	pending          chan struct{}
+	data    overviewPanel
+	attempt time.Time
+	err     error
+	pending chan struct{}
 }
 type overviewCache struct {
 	mu      sync.Mutex
@@ -217,9 +217,8 @@ func (c *overviewCache) read(ctx context.Context, key string, ttl time.Duration,
 		entry.attempt = time.Now()
 		entry.err = err
 		if err == nil {
-			entry.success = entry.attempt
 			data.Loaded = true
-			data.LastSuccess = entry.success.UTC().Format(overviewTimeFormat)
+			data.LastSuccess = entry.attempt.UTC().Format(overviewTimeFormat)
 			entry.data = data
 		}
 		data = entry.data

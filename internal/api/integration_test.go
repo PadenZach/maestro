@@ -23,7 +23,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *hub.Hub) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, 2*time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey"}, h, log)
+	srv := api.New(config.Config{}, h, log)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, h

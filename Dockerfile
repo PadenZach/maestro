@@ -33,6 +33,6 @@ LABEL org.opencontainers.image.title="maestro" \
 COPY --from=build /out/maestro /maestro
 USER 65532:65532
 # Container traffic arrives through its network interface, not its loopback.
-ENV CONDUCTOR_LISTEN_ADDR=:8090 CONDUCTOR_ALLOW_REMOTE=true
+ENV CONDUCTOR_LISTEN_ADDR=:8090
 EXPOSE 8090
 ENTRYPOINT ["/maestro"]

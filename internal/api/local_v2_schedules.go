@@ -3,9 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"time"
-	"unicode/utf8"
 
 	"github.com/zpaden/maestro/internal/protocol"
 )
@@ -32,19 +30,9 @@ func localV2Schedule(schedule protocol.ScheduleOutput) (*Schedule, error) {
 }
 
 func localV2ScheduleQuery(r *http.Request) (protocol.ListSchedulesBody, error) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return protocol.ListSchedulesBody{}, fmt.Errorf("malformed query")
-	}
-	for name, values := range query {
-		if !utf8.ValidString(name) {
-			return protocol.ListSchedulesBody{}, fmt.Errorf("malformed query")
-		}
-		for _, value := range values {
-			if !utf8.ValidString(value) {
-				return protocol.ListSchedulesBody{}, fmt.Errorf("malformed query")
-			}
-		}
 	}
 	var body protocol.ListSchedulesBody
 	for name, values := range query {

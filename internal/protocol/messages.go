@@ -42,7 +42,6 @@ type WorkflowsOutput struct {
 	QueuePartitionKey       *string `json:"QueuePartitionKey"`
 	ForkedFrom              *string `json:"ForkedFrom"`
 	WasForkedFrom           bool    `json:"WasForkedFrom"`
-	hasWasForkedFrom        bool
 	fields                  fieldPresence
 	ParentWorkflowID        *string `json:"ParentWorkflowID"`
 	DequeuedAt              *string `json:"DequeuedAt"`
@@ -58,7 +57,6 @@ type WorkflowsOutput struct {
 // Mirrors protocol.py:WorkflowSteps.
 type WorkflowSteps struct {
 	FunctionID         int `json:"function_id"`
-	hasFunctionID      bool
 	fields             fieldPresence
 	FunctionName       string  `json:"function_name"`
 	Output             *string `json:"output"`
@@ -109,11 +107,10 @@ func (w *WorkflowsOutput) UnmarshalJSON(data []byte) error {
 	}
 	*w = WorkflowsOutput(decoded)
 	w.fields = presence
-	w.hasWasForkedFrom = presence["WasForkedFrom"]
 	return nil
 }
 
-func (w WorkflowsOutput) HasWasForkedFrom() bool        { return w.hasWasForkedFrom }
+func (w WorkflowsOutput) HasWasForkedFrom() bool        { return w.fields["WasForkedFrom"] }
 func (w WorkflowsOutput) FieldPresent(name string) bool { return w.fields.present(name) }
 func (w WorkflowsOutput) FieldNull(name string) bool    { return w.fields.null(name) }
 
@@ -129,11 +126,10 @@ func (s *WorkflowSteps) UnmarshalJSON(data []byte) error {
 	}
 	*s = WorkflowSteps(decoded)
 	s.fields = presence
-	s.hasFunctionID = presence["function_id"]
 	return nil
 }
 
-func (s WorkflowSteps) HasFunctionID() bool           { return s.hasFunctionID }
+func (s WorkflowSteps) HasFunctionID() bool           { return s.fields["function_id"] }
 func (s WorkflowSteps) FieldPresent(name string) bool { return s.fields.present(name) }
 func (s WorkflowSteps) FieldNull(name string) bool    { return s.fields.null(name) }
 

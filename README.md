@@ -35,13 +35,20 @@ mise install
 mise run dev
 ```
 
-Open the console at <http://127.0.0.1:8090>.
+Open the console at <http://127.0.0.1:8090>. Use `--listen 0.0.0.0:8090`
+to accept remote connections; authentication belongs to your gateway.
 
-Run the development checks with Python 3 available:
+Run the development checks:
 
 ```sh
 mise run check
 ```
+
+`mise run sdk:test` tests current DBOS Python 2.31.x and 3.x releases.
+For the pinned Postgres tests, run `mise run sdk:install`, set `POSTGRES18_BIN`
+to your Postgres 18 bin directory, then run `mise run postgres:test` or
+`mise run recovery:test`. `mise run dbosctl:test` also checks the pinned CLI.
+The local UI demo runs with `uv run --project maestro-ui-demo maestro-ui-demo/app.py`.
 
 ## Workflow recovery
 
@@ -54,4 +61,6 @@ active Maestro instance.
 
 Bump [`VERSION`](VERSION), commit, and merge into `main`. CI checks the change
 and publishes the container image, Git tag, and Linux/macOS binaries to GitHub
-Releases. Rerun the original CI run to retry a failed release.
+Releases. `mise run package` builds the four archives and `checksums.txt` locally
+in `dist/release`; `mise run build` builds the native container image.
+Rerun the original CI run to retry a failed release.

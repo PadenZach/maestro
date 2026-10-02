@@ -2,14 +2,8 @@ package protocol
 
 import (
 	"encoding/json"
-
-	"github.com/google/uuid"
+	"fmt"
 )
-
-// NewRequestID returns a fresh correlation id for a server-initiated request.
-func NewRequestID() string {
-	return uuid.NewString()
-}
 
 // DecodeEnvelope extracts the type + request_id from any inbound frame so the
 // read loop can route it to the correct waiter without knowing the concrete
@@ -29,4 +23,25 @@ type Request map[string]any
 // NewRequest builds a request frame of the given type.
 func NewRequest(t MessageType) Request {
 	return Request{"type": string(t)}
+}
+
+// Validate rejects malformed discriminators and unsupported body representations.
+func (r Request) Validate() error {
+	var typ string
+	switch value := r["type"].(type) {
+	case string:
+		typ = value
+	case MessageType:
+		typ = string(value)
+	}
+	if typ == "" {
+		return fmt.Errorf("invalid request type")
+	}
+	switch MessageType(typ) {
+	case MsgListWorkflows, MsgListQueuedWorkflows, MsgListQueues:
+		if _, ok := r["body"].(map[string]any); !ok && r["body"] != nil {
+			return fmt.Errorf("unsupported %s body representation", typ)
+		}
+	}
+	return nil
 }

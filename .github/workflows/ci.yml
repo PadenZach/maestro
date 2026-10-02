@@ -10,38 +10,40 @@ permissions:
   contents: read
 
 concurrency:
-  # New PR commits replace stale checks. Each main commit keeps its release run.
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  version:
+  checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     outputs:
-      version: ${{ steps.plan.outputs.version }}
-      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - id: plan
-        env:
-          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
-        run: python3 -B dev/release.py plan
-
-  checks:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - run: mise run check
       - run: mise run ci:lint
       - run: mise run scan
+      - id: version
+        env:
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          version="$(cat VERSION)"
+          previous="$version"
+          if [[ -n "$BASE_SHA" && "$BASE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            previous="$(git show "$BASE_SHA:VERSION")"
+          fi
+          release=false
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main && "$version" != "$previous" ]]; then
+            release=true
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
 
   sdk:
     if: github.ref == 'refs/heads/main'
@@ -52,39 +54,18 @@ jobs:
       fail-fast: false
       matrix:
         dbos: ['2', '3']
-    env:
-      DBOS_SDK_MAJOR: ${{ matrix.dbos }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - run: mise run sdk:test
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && !env.ACT
-        with:
-          name: sdk-${{ matrix.dbos }}-versions
-          path: dist/sdk-${{ matrix.dbos }}.json
-          if-no-files-found: error
+        env:
+          DBOS_SDK_MAJOR: ${{ matrix.dbos }}
 
   image:
-    if: github.ref == 'refs/heads/main'
-    needs: [version, checks, sdk]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - run: mise run build
-      - run: mise run image:scan
-      - run: mise run image:test
-
-  candidate:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: image
+    needs: [checks, sdk]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -97,22 +78,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Log in to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: Build and scan candidate
+      - name: Build candidate
         id: build
         env:
           IMAGE_REPOSITORY: ${{ vars.GHCR_IMAGE || format('ghcr.io/{0}', github.repository) }}
-        run: mise run image:candidate
+        run: |
+          repository="${IMAGE_REPOSITORY,,}"
+          docker buildx build --push --platform linux/amd64,linux/arm64 \
+            --tag "$repository:candidate-$GITHUB_SHA" --sbom=true --provenance=mode=min \
+            --build-arg "VERSION=$(cat VERSION)" --build-arg "REVISION=$GITHUB_SHA" \
+            --build-arg MODIFIED=false --build-arg "CREATED=$(git show -s --format=%cI HEAD)" \
+            --metadata-file "$RUNNER_TEMP/image.json" .
+          echo "repository=$repository" >> "$GITHUB_OUTPUT"
+          echo "digest=$(jq -r '.["containerimage.digest"]' "$RUNNER_TEMP/image.json")" >> "$GITHUB_OUTPUT"
 
-  candidate-test:
-    needs: [version, candidate]
+  image-test:
+    needs: [checks, image]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     permissions:
@@ -121,14 +108,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     env:
-      IMAGE: ${{ needs.candidate.outputs.repository }}@${{ needs.candidate.outputs.digest }}
-      EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+      IMAGE: ${{ needs.image.outputs.repository }}@${{ needs.image.outputs.digest }}
+      EXPECTED_VERSION: ${{ needs.checks.outputs.version }}
       EXPECTED_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -140,46 +123,69 @@ jobs:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-      - env:
-          PLATFORM: linux/${{ matrix.arch }}
-        run: docker pull --platform "$PLATFORM" "$IMAGE"
+      - run: docker pull "$IMAGE"
+      - run: mise run image:scan
       - run: mise run image:test
 
   publish:
-    needs: [version, candidate, candidate-test]
+    needs: [checks, image, image-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # Serialize reruns or competing commits for the same version.
     concurrency:
-      group: publish-${{ needs.version.outputs.release == 'true' && needs.version.outputs.version || github.sha }}
+      group: publish-${{ needs.checks.outputs.release == 'true' && needs.checks.outputs.version || github.sha }}
       cancel-in-progress: false
     permissions:
       contents: write
       packages: write
-      attestations: read
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      IMAGE_REPOSITORY: ${{ needs.candidate.outputs.repository }}
-      IMAGE_DIGEST: ${{ needs.candidate.outputs.digest }}
-      RELEASE: ${{ needs.version.outputs.release }}
+      IMAGE_REPOSITORY: ${{ needs.image.outputs.repository }}
+      IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+      RELEASE_VERSION: ${{ needs.checks.outputs.version }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-        if: needs.version.outputs.release == 'true'
+        if: needs.checks.outputs.release == 'true'
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: Promote tested image and publish version bump
-        run: python3 -B dev/release.py publish
-      - name: Verify installation through the mise GitHub backend
-        if: needs.version.outputs.release == 'true'
+      - name: Tag tested image by commit
+        run: docker buildx imagetools create --tag "$IMAGE_REPOSITORY:sha-$GITHUB_SHA" "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+      - run: mise run package
+        if: needs.checks.outputs.release == 'true'
+      - name: Publish VERSION release
+        if: needs.checks.outputs.release == 'true'
+        run: |
+          tag="v$RELEASE_VERSION"
+          if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
+            test "$(git rev-parse "$tag^{commit}")" = "$GITHUB_SHA"
+          else
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" --method POST -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA"
+          fi
+          release="$(gh release list --limit 1000 --json tagName,isDraft --jq ".[] | select(.tagName == \"$tag\") | .isDraft")"
+          if [[ "$release" == false ]]; then
+            echo "$tag is already published"
+            exit 0
+          fi
+          if [[ -z "$release" ]]; then
+            options=()
+            [[ "$RELEASE_VERSION" != *-* ]] || options+=(--prerelease)
+            gh release create "$tag" --verify-tag --draft --target "$GITHUB_SHA" --title "$tag" \
+              --generate-notes "${options[@]}" dist/release/*
+          else
+            gh release upload "$tag" --clobber dist/release/*
+          fi
+          docker buildx imagetools create --tag "$IMAGE_REPOSITORY:$RELEASE_VERSION" "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          gh release edit "$tag" --draft=false
+      - name: Verify installation through mise
+        if: needs.checks.outputs.release == 'true'
         working-directory: ${{ runner.temp }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ needs.version.outputs.version }}
         run: mise exec "github:${GITHUB_REPOSITORY}@${RELEASE_VERSION}" -- maestro --help

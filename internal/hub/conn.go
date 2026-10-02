@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -91,7 +92,7 @@ func (c *Conn) start() {
 // teardown. The raw response bytes are returned so callers decode into their
 // own response type.
 func (c *Conn) roundtrip(ctx context.Context, req protocol.Request) ([]byte, error) {
-	reqID := protocol.NewRequestID()
+	reqID := rand.Text()
 	// The caller may reuse the same map concurrently; only the frame copy is ours.
 	frame := make(protocol.Request, len(req)+1)
 	maps.Copy(frame, req)

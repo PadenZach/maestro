@@ -176,7 +176,7 @@ func aggregateSecondsText(ms int64) string {
 	return whole
 }
 func parseAggregateControls(r *http.Request, sections []aggregateSection) (map[string]json.RawMessage, error) {
-	query, err := localV2WorkflowQueryValues(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return nil, err
 	}

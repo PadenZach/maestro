@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 	"unicode/utf8"
 
@@ -16,26 +15,8 @@ import (
 
 var localV2WorkflowSearchFields = requestFields[WorkflowSearchBody]()
 
-func localV2WorkflowQueryValues(rawQuery string) (url.Values, error) {
-	query, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		return nil, errors.New("malformed query")
-	}
-	for name, values := range query {
-		if !utf8.ValidString(name) {
-			return nil, errors.New("malformed query")
-		}
-		for _, value := range values {
-			if !utf8.ValidString(value) {
-				return nil, errors.New("malformed query")
-			}
-		}
-	}
-	return query, nil
-}
-
 func localV2WorkflowListQuery(r *http.Request) (protocol.ListWorkflowsBody, error) {
-	query, err := localV2WorkflowQueryValues(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return protocol.ListWorkflowsBody{}, err
 	}
@@ -332,7 +313,7 @@ func (s *Server) localV2Search(w http.ResponseWriter, r *http.Request) {
 		localV2Problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	query, err := localV2WorkflowQueryValues(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil || len(query) != 0 {
 		localV2Problem(w, http.StatusBadRequest, "search query parameters are unsupported or malformed")
 		return

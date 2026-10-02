@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"time"
 	"unicode/utf8"
 
@@ -456,20 +455,12 @@ func (s *Server) localV2StepAggregates(w http.ResponseWriter, r *http.Request) {
 }
 
 func localV2ExportQuery(r *http.Request) (bool, error) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return false, errors.New("malformed query")
 	}
 	exportChildren := false
 	for name, values := range query {
-		if !utf8.ValidString(name) {
-			return false, errors.New("malformed query")
-		}
-		for _, value := range values {
-			if !utf8.ValidString(value) {
-				return false, errors.New("malformed query")
-			}
-		}
 		if name != "exportChildren" {
 			return false, fmt.Errorf("unsupported query %q", name)
 		}
@@ -484,43 +475,6 @@ func localV2ExportQuery(r *http.Request) (bool, error) {
 	// The SDK wire field is required. The optional HTTP boolean has the natural
 	// false value when omitted; this does not enable recursive child export.
 	return exportChildren, nil
-}
-
-func localV2InspectionWorkflowExists(raw []byte, expectedID string) (bool, error) {
-	fields, err := localV2RawObject(raw, "workflow response")
-	if err != nil {
-		return false, err
-	}
-	var base protocol.BaseResponse
-	if err := json.Unmarshal(raw, &base); err != nil {
-		return false, fmt.Errorf("decode response: %w", err)
-	}
-	if err := base.Err(); err != nil {
-		return false, err
-	}
-	output, ok := fields["output"]
-	if !ok {
-		return false, errors.New("invalid executor workflow output: missing")
-	}
-	if bytes.Equal(bytes.TrimSpace(output), []byte("null")) {
-		return false, nil
-	}
-	outputFields, err := localV2RawObject(output, "workflow output")
-	if err != nil {
-		return false, err
-	}
-	workflowID, err := localV2RequiredString(outputFields, "WorkflowUUID", "workflow output")
-	if err != nil {
-		return false, err
-	}
-	var workflow protocol.WorkflowsOutput
-	if err := json.Unmarshal(output, &workflow); err != nil {
-		return false, fmt.Errorf("invalid executor workflow output: %w", err)
-	}
-	if workflow.WorkflowUUID != workflowID || workflowID != expectedID {
-		return false, errors.New("invalid executor workflow output: inconsistent WorkflowUUID")
-	}
-	return true, nil
 }
 
 func localV2ExportValue(raw []byte) (string, error) {
@@ -564,7 +518,7 @@ func (s *Server) localV2ExportWorkflow(w http.ResponseWriter, r *http.Request) {
 		localV2Failure(w, err)
 		return
 	}
-	exists, err := localV2InspectionWorkflowExists(existenceRaw, workflowID)
+	exists, err := localV2WorkflowExists(existenceRaw, workflowID)
 	if err != nil {
 		localV2Failure(w, err)
 		return

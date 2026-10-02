@@ -106,9 +106,14 @@ func TestRecoveryBoundaryRegistryGenerations(t *testing.T) {
 						n++
 					}
 				}
-				picked, ok := h.Pick(app)
-				if ok != (n > 0) || (ok && want[app+"/"+picked.executor.ID] != picked.executor.Version) {
-					t.Fatalf("step %d: Pick(%q) selected an unavailable or stale generation", step, app)
+				connections := h.conns(app)
+				if len(connections) != n {
+					t.Fatalf("step %d: %q has %d dispatch candidates, want %d", step, app, len(connections), n)
+				}
+				for _, conn := range connections {
+					if want[app+"/"+conn.executor.ID] != conn.executor.Version {
+						t.Fatalf("step %d: dispatch candidate for %q is stale", step, app)
+					}
 				}
 			}
 		}

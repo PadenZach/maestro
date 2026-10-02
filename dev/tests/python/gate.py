@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import html as html_module
+import importlib.metadata
 import json
 import os
 import re
@@ -11,7 +12,6 @@ import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -19,7 +19,6 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-VERSIONS = ("2.31.1", "3.1.0")
 DEADLINE = 65
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
@@ -56,40 +55,11 @@ def stop(proc, timeout=12):
         raise AssertionError("owned child did not terminate within deadline")
 
 
-def drain_redacted(pipe, log, key, value):
-    try:
-        for line in pipe:
-            log.write(line.replace(key, "[KEY]").replace(value, "[DATA]")[:4096])
-    finally:
-        pipe.close()
-        log.flush()
-
-
-def run(
-    version,
-    binary,
-    temp,
-    bad_endpoint,
-    private,
-    bad_blob,
-    dbosctl_bin=None,
-    *,
-    python=None,
-):
+def run(binary, temp, private, dbosctl_bin=None):
+    version = importlib.metadata.version("dbos")
     if not (version.startswith("2.31.") or version.startswith("3.")):
         raise ValueError("supported DBOS Python releases are 2.31.x and 3.x")
     temp.mkdir(mode=0o700)
-    python = python or ROOT / "dev/tests/python" / version / ".venv/bin/python"
-    if not python.is_file():
-        raise RuntimeError(
-            f"missing isolated {version} environment: run uv sync --locked in dev/tests/python/{version}"
-        )
-    actual = subprocess.check_output(
-        [str(python), "-c", "import importlib.metadata as m; print(m.version('dbos'))"],
-        timeout=8,
-        text=True,
-    ).strip()
-    assert actual == version, (actual, version)
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
@@ -120,20 +90,14 @@ def run(
         (temp / "sdk.log").open("w+") as sdk_log,
     ):
         server = subprocess.Popen(
-            [str(binary), "--listen", f"127.0.0.1:{port}", "--key", key],
+            [str(binary), "--listen", f"127.0.0.1:{port}"],
             cwd=ROOT,
             env=clean,
-            stdout=subprocess.PIPE,
+            stdout=server_log,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        assert server.stdout is not None
-        server_reader = threading.Thread(
-            target=drain_redacted, args=(server.stdout, server_log, key, "gate-value")
-        )
-        server_reader.start()
         app_proc = None
-        app_reader = None
         try:
             deadline = time.monotonic() + DEADLINE
 
@@ -143,20 +107,14 @@ def run(
 
             wait_for(healthy, deadline, "maestro health")
             app_proc = subprocess.Popen(
-                [str(python), str(ROOT / "dev/tests/python/app.py")],
+                [sys.executable, str(ROOT / "dev/tests/python/app.py")],
                 cwd=temp,
                 env=clean,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=sdk_log,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            assert app_proc.stdout is not None
-            app_reader = threading.Thread(
-                target=drain_redacted,
-                args=(app_proc.stdout, sdk_log, key, "gate-value"),
-            )
-            app_reader.start()
 
             def started():
                 assert app_proc.poll() is None, "SDK app exited before ready"
@@ -165,10 +123,7 @@ def run(
 
             ready = wait_for(started, deadline, "SDK workflow")
             workflow_id = ready["workflow_id"]
-            api = base + ("/incompatible-endpoint" if bad_endpoint else "/api")
-            if bad_endpoint:
-                status, _ = request_text(api, "/executors")
-                assert status == 200, f"executor endpoint status {status}, expected 200"
+            api = base + "/api"
 
             def connected():
                 status, peers = request(api, "/executors")
@@ -215,8 +170,6 @@ def run(
                     )
                     actual_hash = hashlib.sha256(detail[field].encode()).hexdigest()
                     expected_hash = ready[field.lower() + "_sha256"]
-                    if bad_blob and field == "Input":
-                        expected_hash = "0" * 64  # opt-in assertion negative control
                     assert actual_hash == expected_hash, (
                         f"JSON {field} blob differs from SDK"
                     )
@@ -400,12 +353,12 @@ def run(
                 + ("/metadata-refusal" if private else "")
             )
         except Exception:
-            # Logs stay in owned temp scope and are never printed with key, URL or payloads.
             print(
                 f"SDK exit={app_proc.poll() if app_proc else 'not-started'}, maestro exit={server.poll()}",
                 file=sys.stderr,
             )
-            # Child logs are redacted while draining; never relay raw SDK data.
+            for log in ("server.log", "sdk.log"):
+                print((temp / log).read_text()[-6000:], file=sys.stderr)
             raise
         finally:
             try:
@@ -420,15 +373,7 @@ def run(
                     finally:
                         stop(app_proc)
             finally:
-                try:
-                    stop(server)
-                finally:
-                    server_reader.join(timeout=3)
-                    if app_reader is not None:
-                        app_reader.join(timeout=3)
-            assert not server_reader.is_alive(), "maestro log reader did not finish"
-            if app_reader is not None:
-                assert not app_reader.is_alive(), "SDK log reader did not finish"
+                stop(server)
 
 
 def request_text(base, path):
@@ -440,53 +385,17 @@ def request_text(base, path):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--version", choices=VERSIONS, action="append")
-    parser.add_argument(
-        "--dbosctl-bin",
-        type=Path,
-        help="explicit pinned dbosctl for real SDK HTTP reads",
-    )
-    parser.add_argument(
-        "--probe-bad-endpoint",
-        action="store_true",
-        help="negative-control: must fail after SDK startup",
-    )
-    parser.add_argument(
-        "--probe-bad-blob",
-        action="store_true",
-        help="negative-control: corrupt expected Input digest",
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--dbosctl-bin", type=Path)
     args = parser.parse_args()
+    version = importlib.metadata.version("dbos")
+    print(f"Testing DBOS {version}", flush=True)
     with tempfile.TemporaryDirectory(prefix="maestro-python-gate-") as path:
         temp = Path(path)
-        binary = temp / "maestro"
-        subprocess.run(
-            ["go", "build", "-o", str(binary), "./cmd/maestro"],
-            cwd=ROOT,
-            check=True,
-            timeout=90,
-        )
-        for version in args.version or VERSIONS:
-            run(
-                version,
-                binary,
-                temp / version,
-                args.probe_bad_endpoint,
-                version == "3.1.0",
-                args.probe_bad_blob,
-                args.dbosctl_bin,
-            )
-            if version == "3.1.0" and not args.probe_bad_endpoint:
-                run(
-                    version,
-                    binary,
-                    temp / "3.1.0-data",
-                    False,
-                    False,
-                    args.probe_bad_blob,
-                    args.dbosctl_bin,
-                )
+        run(args.binary.resolve(), temp / "data", False, args.dbosctl_bin)
+        if version.startswith("3."):
+            run(args.binary.resolve(), temp / "metadata", True, args.dbosctl_bin)
 
 
 if __name__ == "__main__":

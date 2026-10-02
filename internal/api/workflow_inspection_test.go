@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"html"
 	"strings"
 	"testing"
 
@@ -139,7 +140,7 @@ func TestWorkflowChildReadOutcomes(t *testing.T) {
 			})
 			waitFor(t, func() bool { return len(h.Executors()) == 1 })
 			_, body := getBody(t, ts.URL+"/apps/myapp/workflows/child/timeline?ancestor=root&branch=left")
-			if !strings.Contains(body, tc.want) {
+			if !strings.Contains(html.UnescapeString(body), tc.want) {
 				t.Fatalf("%s outcome absent: %s", tc.name, body)
 			}
 		})

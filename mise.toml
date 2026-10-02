@@ -3,12 +3,9 @@
 [tools]
 go = "1.26.8"
 
-[env]
-MAESTRO_PORT = "8090"
-
 [tasks.dev]
 description = "Run the development server on http://127.0.0.1:8090"
-run = 'go run -buildvcs=true ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT"'
+run = "go run -buildvcs=true ./cmd/maestro"
 
 [tasks.fmt]
 description = "Format Go source"
@@ -29,9 +26,44 @@ fi
   "go vet ./...",
   "go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...",
   "go test -race -count=1 ./...",
-  "python3 -B dev/release.py check",
-  "python3 -B -m unittest discover -s dev/tests/release",
+  "mise run version:check",
 ]
+
+[tasks."version:check"]
+description = "Validate VERSION as an OCI-compatible SemVer"
+shell = "bash -euo pipefail -c"
+run = '''
+version="$(cat VERSION)"
+number='(0|[1-9][0-9]*)'
+identifier="($number|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+[[ "$version" =~ ^$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]
+test "$(printf %s "$version" | wc -c)" -le 128
+'''
+
+[tasks.package]
+description = "Package Linux/macOS binaries and SHA-256 checksums in dist/release"
+depends = ["version:check"]
+shell = "bash -euo pipefail -c"
+run = '''
+version="$(cat VERSION)"
+revision="$(git rev-parse HEAD)"
+modified="$([ -z "$(git status --porcelain)" ] && echo false || echo true)"
+destination="$PWD/dist/release"
+mkdir -p "$destination"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+cp LICENSE "$scratch/"
+for system in linux darwin; do
+  for arch in amd64 arm64; do
+    CGO_ENABLED=0 GOOS="$system" GOARCH="$arch" go build -trimpath -buildvcs=false \
+      -ldflags="-s -w -X github.com/zpaden/maestro/internal/web.Revision=$revision -X github.com/zpaden/maestro/internal/web.Modified=$modified" \
+      -o "$scratch/maestro" ./cmd/maestro
+    COPYFILE_DISABLE=1 tar -czf "$destination/maestro_${version}_${system}_${arch}.tar.gz" -C "$scratch" maestro LICENSE
+  done
+done
+cd "$destination"
+shasum -a 256 "maestro_${version}_"*.tar.gz > checksums.txt
+'''
 
 [tasks.build]
 description = "Build and load the native image into Docker"
@@ -49,13 +81,9 @@ description = "Scan IMAGE (default maestro:local) for HIGH/CRITICAL vulnerabilit
 run = 'trivy image --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 "${IMAGE:-maestro:local}"'
 tools = { trivy = "0.74.0" }
 
-[tasks."image:candidate"]
-description = "Push or reuse a candidate by commit, then scan both platforms (CI)"
-run = "python3 -B dev/release.py candidate"
-
 [tasks."image:test"]
 description = "Test the container's HTTP endpoints, shutdown and security settings"
-run = "python3 -B dev/tests/container/smoke.py"
+run = "bash dev/tests/container/smoke.sh"
 
 [tasks.scan]
 description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
@@ -70,8 +98,60 @@ tools = { trivy = "0.74.0" }
 
 [tasks."sdk:test"]
 description = "Test latest stable DBOS Python 2.31.x and 3.x (or DBOS_SDK_MAJOR)"
-run = "python3 -B dev/tests/python/latest.py"
+shell = "bash -euo pipefail -c"
+run = '''
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+go build -o "$scratch/maestro" ./cmd/maestro
+for major in ${DBOS_SDK_MAJOR:-2 3}; do
+  case "$major" in
+    2) sdk='dbos>=2.31,<2.32' ;;
+    3) sdk='dbos>=3,<4' ;;
+    *) echo 'DBOS_SDK_MAJOR must be 2 or 3' >&2; exit 1 ;;
+  esac
+  uv run --no-project --no-config --python 3.12 --with "$sdk" --upgrade-package dbos --prerelease disallow \
+    python -B dev/tests/python/gate.py --binary "$scratch/maestro"
+done
+'''
 tools = { uv = "0.12.21" }
+
+[tasks."dbosctl:test"]
+description = "Test the pinned dbosctl client against fake peers and real DBOS SDKs"
+shell = "bash -euo pipefail -c"
+run = '''
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+git clone --quiet --depth=1 --branch v0.10.1 https://github.com/dbos-inc/dbos-ctl.git "$scratch/source"
+test "$(git -C "$scratch/source" rev-parse HEAD)" = 17879522360ced42ea9a2a7778e0a2d0973d7901
+go -C "$scratch/source" build -o "$scratch/dbosctl" ./cmd/dbosctl
+DBOSCTL_BIN="$scratch/dbosctl" go test -tags=dbosctl -race -count=1 ./internal/api -run '^Test(LocalHTTPV2|HTTPWorkflow|HTTPV2|DBOSCTL)'
+go build -o "$scratch/maestro" ./cmd/maestro
+for version in 2.31.1 3.1.0; do
+  uv run --locked --no-config --project "dev/tests/python/$version" \
+    python -B dev/tests/python/gate.py --binary "$scratch/maestro" --dbosctl-bin "$scratch/dbosctl"
+done
+'''
+tools = { uv = "0.12.21" }
+
+[tasks."sdk:install"]
+description = "Install the pinned DBOS environments used by acceptance tests"
+run = '''
+set -eu
+for version in 2.31.1 3.1.0; do
+  uv sync --locked --no-config --project "dev/tests/python/$version"
+done
+'''
+tools = { uv = "0.12.21" }
+
+[tasks."postgres:test"]
+description = "Test the API and Console with real DBOS data in isolated Postgres 18"
+shell = "bash -euo pipefail -c"
+run = '''
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+go build -o "$scratch/maestro" ./cmd/maestro
+python3 -B dev/tests/acceptance/postgres_gate.py --binary "$scratch/maestro"
+'''
 
 [tasks."ci:lint"]
 description = "Validate GitHub Actions workflows"

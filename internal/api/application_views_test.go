@@ -29,7 +29,7 @@ func applicationViewServer(t *testing.T) (*Server, *hub.Hub) {
 		t.Fatal(err)
 	}
 	return &Server{
-		cfg: config.Config{ConductorKey: "testkey"},
+		cfg: config.Config{},
 		hub: h,
 		log: log,
 		web: renderer,

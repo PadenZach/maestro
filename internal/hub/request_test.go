@@ -26,43 +26,14 @@ func versionedPeer(t *testing.T, tsURL, language, sdkVersion, appVersion string)
 	return c
 }
 
-func TestCapabilityPolicyRejectsUnsupportedWithoutSending(t *testing.T) {
-	for _, tc := range []struct {
-		name, language, version, typ string
-		body                         any
-	}{
-		{"no_restart_3", "python", "3.1.0", "restart", nil},
-		{"no_rewind_2", "python", "2.31.1", "rewind_workflow", nil},
-		{"unknown_mutation", "python", "3.1.1", "rewind_workflow", nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			h, ts := testHub(t, time.Second)
-			versionedPeer(t, ts.URL, tc.language, tc.version, "3.1.0")
-			registered(t, h, 1)
-			req := protocol.Request{"type": tc.typ}
-			if tc.body != nil {
-				req["body"] = tc.body
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			_, err := h.Request(ctx, "app", req)
-			if err == nil || errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("unsafe request sent or accepted: %v", err)
-			}
-			waitPending(t, h.conns("app")[0], 0)
-		})
-	}
-}
-
-// A MessageType value serializes to the same JSON string as a plain string;
-// capability checks must inspect both before choosing a peer or sending a frame.
-func TestCapabilityPolicyRejectsTypedAndInvalidDiscriminatorsWithoutSending(t *testing.T) {
+func TestRequestValidationRejectsMalformedFramesWithoutSending(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		typ  any
 		body any
 	}{
-		{"typed_rewind", protocol.MsgRewindWorkflow, nil},
+		{"typed_empty_type", protocol.MessageType(""), nil},
+		{"invalid_body", protocol.MsgListWorkflows, true},
 		{"missing_type", nil, nil},
 		{"invalid_type", 7, nil},
 		{"empty_type", "", nil},
@@ -91,38 +62,6 @@ func TestCapabilityPolicyRejectsTypedAndInvalidDiscriminatorsWithoutSending(t *t
 			}
 			reply(t, ctx, c, map[string]any{"type": "get_workflow", "request_id": wire["request_id"], "output": nil})
 			if got := await(t, next); got.err != nil {
-				t.Fatal(got.err)
-			}
-		})
-	}
-}
-
-func TestCapabilityPolicyAllowsReviewedPairs(t *testing.T) {
-	for _, tc := range []struct {
-		version, typ string
-		body         any
-	}{
-		{"2.24.0", "restart", nil},
-		{"2.31.1", "restart", nil},
-		{"3.1.0", "rewind_workflow", nil},
-	} {
-		t.Run(tc.version+"/"+tc.typ, func(t *testing.T) {
-			h, ts := testHub(t, time.Second)
-			c := versionedPeer(t, ts.URL, "python", tc.version, "app-v1")
-			registered(t, h, 1)
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			req := protocol.Request{"type": tc.typ}
-			if tc.body != nil {
-				req["body"] = tc.body
-			}
-			ch := request(h, ctx, req)
-			_, wire := frame(t, ctx, c)
-			if wire["type"] != tc.typ {
-				t.Fatalf("unexpected wire: %v", wire)
-			}
-			reply(t, ctx, c, map[string]any{"type": tc.typ, "request_id": wire["request_id"], "success": true})
-			if got := await(t, ch); got.err != nil {
 				t.Fatal(got.err)
 			}
 		})

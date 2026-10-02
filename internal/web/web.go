@@ -1,13 +1,4 @@
-// Package web is maestro's embedded DBOS Console: Go html/template pages plus a
-// vendored copy of HTMX and a hand-written dark stylesheet, all baked into the
-// binary via embed.FS so the console ships as a single artifact with no build
-// step and works offline.
-//
-// Rendering model: a shared layout.html (define "layout") wraps each page's
-// {{define "content"}}. Because html/template keeps one namespace per set, each
-// page is parsed into its OWN template set (layout + shared partials + that
-// page). HTMX fragment responses are served from a separate partials set, keyed
-// by the partial's define name.
+// Package web renders the embedded Console pages and serves their static assets.
 package web
 
 import (

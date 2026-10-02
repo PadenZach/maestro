@@ -21,7 +21,7 @@ func (s *Server) localV2RelatedRequest(w http.ResponseWriter, r *http.Request) (
 		return "", "", false
 	}
 	app, workflowID = r.PathValue("app"), r.PathValue("id")
-	if !utf8.ValidString(app) || utf8.RuneCountInString(app) < 3 || utf8.RuneCountInString(app) > 256 || !localV2AppName.MatchString(app) {
+	if err := localV2InspectionApp(app); err != nil {
 		localV2Problem(w, http.StatusBadRequest, "invalid application name")
 		return "", "", false
 	}
@@ -104,7 +104,7 @@ func localV2RelatedPayload(raw []byte, field string) ([]json.RawMessage, error) 
 	return records, nil
 }
 
-func localV2RelatedWorkflowExists(raw []byte) (bool, error) {
+func localV2WorkflowExists(raw []byte, expectedID string) (bool, error) {
 	fields, err := localV2RawObject(raw, "workflow response")
 	if err != nil {
 		return false, err
@@ -131,13 +131,11 @@ func localV2RelatedWorkflowExists(raw []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// Decode the SDK object to retain its normal field-type checks, but do not
-	// apply the stricter official HTTP Workflow mapper or synthesize defaults.
 	var workflow protocol.WorkflowsOutput
 	if err := json.Unmarshal(output, &workflow); err != nil {
 		return false, fmt.Errorf("invalid executor workflow output: %w", err)
 	}
-	if workflow.WorkflowUUID != workflowID {
+	if workflow.WorkflowUUID != workflowID || workflowID != expectedID {
 		return false, errors.New("invalid executor workflow output: inconsistent WorkflowUUID")
 	}
 	return true, nil
@@ -151,7 +149,7 @@ func (s *Server) localV2ReadRelated(r *http.Request, app, workflowID, field stri
 	if err != nil {
 		return nil, 0, err
 	}
-	exists, err := localV2RelatedWorkflowExists(existenceRaw)
+	exists, err := localV2WorkflowExists(existenceRaw, workflowID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -291,63 +289,23 @@ func localV2StreamRecord(raw json.RawMessage) (StreamEntry, error) {
 }
 
 func (s *Server) localV2Events(w http.ResponseWriter, r *http.Request) {
-	app, workflowID, ok := s.localV2RelatedRequest(w, r)
-	if !ok {
-		return
-	}
-	records, status, err := s.localV2ReadRelated(r, app, workflowID, "events", protocol.GetWorkflowEventsRequest(workflowID))
-	if err != nil {
-		if status == http.StatusNotFound {
-			localV2Problem(w, status, err.Error())
-		} else {
-			localV2Failure(w, err)
-		}
-		return
-	}
-	out := make([]Event, 0, len(records))
-	for _, raw := range records {
-		record, err := localV2EventRecord(raw)
-		if err != nil {
-			localV2Failure(w, err)
-			return
-		}
-		out = append(out, record)
-	}
-	writeJSON(w, http.StatusOK, out)
+	serveRelated(s, w, r, "events", protocol.GetWorkflowEventsRequest(r.PathValue("id")), localV2EventRecord)
 }
 
 func (s *Server) localV2Notifications(w http.ResponseWriter, r *http.Request) {
-	app, workflowID, ok := s.localV2RelatedRequest(w, r)
-	if !ok {
-		return
-	}
-	records, status, err := s.localV2ReadRelated(r, app, workflowID, "notifications", protocol.GetWorkflowNotificationsRequest(workflowID))
-	if err != nil {
-		if status == http.StatusNotFound {
-			localV2Problem(w, status, err.Error())
-		} else {
-			localV2Failure(w, err)
-		}
-		return
-	}
-	out := make([]Notification, 0, len(records))
-	for _, raw := range records {
-		record, err := localV2NotificationRecord(raw)
-		if err != nil {
-			localV2Failure(w, err)
-			return
-		}
-		out = append(out, record)
-	}
-	writeJSON(w, http.StatusOK, out)
+	serveRelated(s, w, r, "notifications", protocol.GetWorkflowNotificationsRequest(r.PathValue("id")), localV2NotificationRecord)
 }
 
 func (s *Server) localV2Streams(w http.ResponseWriter, r *http.Request) {
+	serveRelated(s, w, r, "streams", protocol.GetWorkflowStreamsRequest(r.PathValue("id")), localV2StreamRecord)
+}
+
+func serveRelated[T any](s *Server, w http.ResponseWriter, r *http.Request, field string, request protocol.Request, decode func(json.RawMessage) (T, error)) {
 	app, workflowID, ok := s.localV2RelatedRequest(w, r)
 	if !ok {
 		return
 	}
-	records, status, err := s.localV2ReadRelated(r, app, workflowID, "streams", protocol.GetWorkflowStreamsRequest(workflowID))
+	records, status, err := s.localV2ReadRelated(r, app, workflowID, field, request)
 	if err != nil {
 		if status == http.StatusNotFound {
 			localV2Problem(w, status, err.Error())
@@ -356,9 +314,9 @@ func (s *Server) localV2Streams(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	out := make([]StreamEntry, 0, len(records))
+	out := make([]T, 0, len(records))
 	for _, raw := range records {
-		record, err := localV2StreamRecord(raw)
+		record, err := decode(raw)
 		if err != nil {
 			localV2Failure(w, err)
 			return

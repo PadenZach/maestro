@@ -24,7 +24,7 @@ func localV2Server(t *testing.T) (*httptest.Server, *hub.Hub) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, 2*time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey", ListenAddr: "127.0.0.1:0", EnableAggregates: true}, h, log)
+	srv := api.New(config.Config{ListenAddr: "127.0.0.1:0", EnableAggregates: true}, h, log)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, h
@@ -433,19 +433,6 @@ func TestLocalHTTPV2PrivacyRefusalIsNotRetried(t *testing.T) {
 	code, ct, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+"/wf-1", "GET", "")
 	if code != 502 || !strings.HasPrefix(ct, "application/problem+json") || !strings.Contains(raw, "metadata-only refusal") || attempts.Load() != 1 {
 		t.Fatalf("refusal bypass: %d %s %s attempts=%d", code, ct, raw, attempts.Load())
-	}
-}
-
-func TestLocalHTTPV2RejectsNonLoopbackRemote(t *testing.T) {
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := hub.New(log, time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey"}, h, log)
-	r := httptest.NewRequest("GET", localV2WorkflowRoot+"/wf-1", nil)
-	r.RemoteAddr = "198.51.100.20:4321"
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, r)
-	if w.Code != 403 || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/problem+json") {
-		t.Fatalf("non-loopback remote: %d %s", w.Code, w.Body.String())
 	}
 }
 

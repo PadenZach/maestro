@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"unicode/utf8"
 
 	"github.com/zpaden/maestro/internal/protocol"
 )
@@ -39,21 +38,10 @@ func (d schedulesData) ScheduleDetailURL(name string) string {
 }
 
 func parseScheduleListQuery(r *http.Request) (scheduleFilterState, protocol.ListSchedulesBody, error) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return scheduleFilterState{}, protocol.ListSchedulesBody{}, errors.New("malformed query")
 	}
-	for name, values := range query {
-		if !utf8.ValidString(name) {
-			return scheduleFilterState{}, protocol.ListSchedulesBody{}, errors.New("malformed query")
-		}
-		for _, value := range values {
-			if !utf8.ValidString(value) {
-				return scheduleFilterState{}, protocol.ListSchedulesBody{}, errors.New("malformed query")
-			}
-		}
-	}
-
 	var filter scheduleFilterState
 	loadContext := false
 	body := protocol.ListSchedulesBody{LoadContext: &loadContext}
@@ -86,19 +74,9 @@ func parseScheduleListQuery(r *http.Request) (scheduleFilterState, protocol.List
 }
 
 func parseScheduleNameQuery(r *http.Request) (string, error) {
-	query, err := url.ParseQuery(r.URL.RawQuery)
+	query, err := parseUTF8Query(r.URL.RawQuery)
 	if err != nil {
 		return "", errors.New("schedule detail requires exactly one nonempty name query parameter")
-	}
-	for name, values := range query {
-		if !utf8.ValidString(name) {
-			return "", errors.New("schedule detail requires exactly one nonempty name query parameter")
-		}
-		for _, value := range values {
-			if !utf8.ValidString(value) {
-				return "", errors.New("schedule detail requires exactly one nonempty name query parameter")
-			}
-		}
 	}
 	names, hasName := query["name"]
 	if len(query) != 1 || !hasName || len(names) != 1 || names[0] == "" {

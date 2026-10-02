@@ -1,12 +1,9 @@
-// Command maestro is the Go port of the DBOS Conductor control plane.
-// Its WebSocket hub completes the EXECUTOR_INFO handshake with DBOS executors
-// and lists connected executors under GET /api/executors.
+// Command maestro serves the DBOS workflow Console, API and executor connections.
 package main
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -58,19 +55,6 @@ func serve(ctx context.Context, listener net.Listener, server *http.Server, h *h
 	return errors.Join(serveErr, httpErr, hubErr)
 }
 
-// validateHTTPListener checks the bound socket rather than trusting a hostname
-// that might resolve to a different address at listen time.
-func validateHTTPListener(restrictToLoopback bool, addr net.Addr) error {
-	if !restrictToLoopback {
-		return nil
-	}
-	tcp, ok := addr.(*net.TCPAddr)
-	if !ok || tcp.IP == nil || !tcp.IP.IsLoopback() {
-		return fmt.Errorf("non-loopback listeners require --allow-remote")
-	}
-	return nil
-}
-
 func main() {
 	cfg := config.Load()
 
@@ -84,11 +68,6 @@ func main() {
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		log.Error("http listen failed", "err", err)
-		os.Exit(1)
-	}
-	if err := validateHTTPListener(!cfg.AllowRemote, listener.Addr()); err != nil {
-		_ = listener.Close()
-		log.Error("invalid HTTP listener configuration", "err", err)
 		os.Exit(1)
 	}
 	log.Info("maestro listening", "addr", listener.Addr().String())

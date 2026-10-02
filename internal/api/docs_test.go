@@ -71,7 +71,7 @@ func TestConductorDocsDescribeRuntimeFailures(t *testing.T) {
 		for method, value := range item.(map[string]any) {
 			op := value.(map[string]any)
 			responses := op["responses"].(map[string]any)
-			for _, status := range []string{"400", "403", "404", "502", "503"} {
+			for _, status := range []string{"400", "404", "502", "503"} {
 				response, ok := responses[status].(map[string]any)
 				if !ok {
 					t.Errorf("%s %s omits runtime status %s", method, path, status)
@@ -82,7 +82,7 @@ func TestConductorDocsDescribeRuntimeFailures(t *testing.T) {
 					t.Errorf("%s %s status %s omits the problem response", method, path, status)
 				}
 			}
-			if responses["401"] != nil {
+			if responses["401"] != nil || responses["403"] != nil {
 				t.Errorf("%s %s documents authentication the server does not implement", method, path)
 			}
 		}

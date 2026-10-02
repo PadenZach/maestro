@@ -291,7 +291,7 @@ async function delayedInspection(page, base) {
       return original.call(this, input, options);
     };
   });
-  await page.locator('.child-branch').first().locator(':scope > .tl-row .tl-fold').press('Enter');
+  await page.locator('.child-branch').first().locator(':scope > .tl-row .tl-fold').click();
   const childStep = page.locator('.step-inspection[data-step-workflow="child"]').first();
   let held;
   let delivered;
@@ -303,10 +303,10 @@ async function delayedInspection(page, base) {
     await route.fulfill({ response });
     delivered();
   });
-  await childStep.press('Enter');
+  await childStep.click();
   await until(() => held, 'held child inspection response');
   await expect(drawer(page).locator('.drawer-body'), 'nested step inspection shows drawer loading').toHaveAttribute('aria-busy', 'true');
-  await page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="2"]').press('Enter');
+  await page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="2"]').click();
   await expectSelection(page, 'shared', 2);
   assert(await page.evaluate(() => window.inspectionSignal.aborted), 'selection change aborts the previous read');
   held();
@@ -322,7 +322,7 @@ async function delayedInspection(page, base) {
     await route.fulfill({ response });
     delivered();
   });
-  await childStep.press('Enter');
+  await childStep.click();
   await until(() => held, 'pending inspection before close');
   await page.keyboard.press('Escape');
   assert(await page.evaluate(() => window.inspectionSignal.aborted), 'close aborts the selected read');
@@ -333,7 +333,7 @@ async function delayedInspection(page, base) {
   await page.unroute(pattern);
 
   await page.route(pattern, route => route.abort());
-  await childStep.press('Enter');
+  await childStep.click();
   await expect(drawer(page)).toContainText('Could not load details. Try again.');
   await page.unroute(pattern);
   await drawer(page).getByRole('button', { name: 'Retry', exact: true }).click();

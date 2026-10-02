@@ -93,8 +93,6 @@ func TestRecentFilterWire(t *testing.T) {
 		t.Run(version, func(t *testing.T) {
 			fixture := recentWire(t, version)
 			var body ListWorkflowsBody
-			// Decode the SDK-derived filter body so this test compiles before the
-			// newer typed fields exist; the exact outbound frame must still match.
 			raw := wireMap(t, fixture.Requests["list_workflows_recent"])["body"]
 			b, _ := json.Marshal(raw)
 			if err := json.Unmarshal(b, &body); err != nil {
@@ -111,17 +109,12 @@ func TestRecentFilterWire(t *testing.T) {
 			legacy := ListQueuesRequest()
 			legacy["request_id"] = "req-sanitized"
 			checkWire(t, legacy, sdkFixtures(t, version).Requests["list_queues"])
-			// The optional filtered form must be a typed builder, not an open-map escape.
-			builder := reflect.ValueOf(ListQueuesRequest)
-			if builder.Type().NumIn() != 1 || !builder.Type().IsVariadic() {
-				t.Fatal("no optional typed list-queues body")
-			}
-			arg := reflect.New(builder.Type().In(0).Elem())
+			var queues ListQueuesBody
 			b, _ = json.Marshal(wireMap(t, fixture.Requests["list_queues_recent"])["body"])
-			if err := json.Unmarshal(b, arg.Interface()); err != nil {
+			if err := json.Unmarshal(b, &queues); err != nil {
 				t.Fatal(err)
 			}
-			req := builder.Call([]reflect.Value{arg.Elem()})[0].Interface().(Request)
+			req := ListQueuesRequest(queues)
 			req["request_id"] = "req-sanitized"
 			checkWire(t, req, fixture.Requests["list_queues_recent"])
 		})

@@ -37,8 +37,6 @@ func htmlErrorText(err error) string {
 		return "maestro: application unavailable"
 	case errors.Is(err, hub.ErrHubClosed):
 		return "maestro: hub closed"
-	case errors.Is(err, hub.ErrUnsupportedCapability):
-		return "maestro: unsupported executor capability"
 	case hub.IsExecutorConnectionClosed(err):
 		return "maestro: executor connection closed"
 	default:

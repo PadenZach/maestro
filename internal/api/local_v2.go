@@ -5,24 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zpaden/maestro/internal/hub"
 	"github.com/zpaden/maestro/internal/protocol"
 )
 
-// localV2Allowed is defense in depth; startup separately checks the actual bound listener.
 func (s *Server) localV2Allowed(w http.ResponseWriter, r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	ip := net.ParseIP(host)
-	if !s.cfg.AllowRemote && (err != nil || ip == nil || !ip.IsLoopback()) {
-		localV2Problem(w, 403, "local HTTP v2 requires a loopback client")
-		return false
-	}
 	if r.PathValue("org") != s.cfg.OrgName {
 		localV2Problem(w, 404, "organization not found")
 		return false
@@ -279,4 +272,22 @@ func localV2Step(s protocol.WorkflowSteps) (*Step, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func parseUTF8Query(rawQuery string) (url.Values, error) {
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil, errors.New("malformed query")
+	}
+	for name, values := range query {
+		if !utf8.ValidString(name) {
+			return nil, errors.New("malformed query")
+		}
+		for _, value := range values {
+			if !utf8.ValidString(value) {
+				return nil, errors.New("malformed query")
+			}
+		}
+	}
+	return query, nil
 }

@@ -6,9 +6,6 @@
 // request ({type, request_id, ...}); the executor only ever RESPONDS, echoing
 // the request_id and carrying an optional error_message. Every inbound frame
 // on a connection is therefore a response to a request we sent.
-//
-// MessageType values include commands not yet handled by this server. The string
-// values are wire-significant; presence here does not imply command support.
 package protocol
 
 import "errors"
@@ -17,40 +14,28 @@ import "errors"
 type MessageType string
 
 const (
-	MsgExecutorInfo                MessageType = "executor_info"
-	MsgRecovery                    MessageType = "recovery"
-	MsgCancel                      MessageType = "cancel"
-	MsgDelete                      MessageType = "delete"
-	MsgListWorkflows               MessageType = "list_workflows"
-	MsgListQueuedWorkflows         MessageType = "list_queued_workflows"
-	MsgResume                      MessageType = "resume"
-	MsgRestart                     MessageType = "restart"
-	MsgRewindWorkflow              MessageType = "rewind_workflow"
-	MsgGetWorkflow                 MessageType = "get_workflow"
-	MsgExistPendingWorkflows       MessageType = "exist_pending_workflows"
-	MsgListSteps                   MessageType = "list_steps"
-	MsgForkWorkflow                MessageType = "fork_workflow"
-	MsgRetention                   MessageType = "retention"
-	MsgGetMetrics                  MessageType = "get_metrics"
-	MsgAlert                       MessageType = "alert"
-	MsgExportWorkflow              MessageType = "export_workflow"
-	MsgImportWorkflow              MessageType = "import_workflow"
-	MsgListSchedules               MessageType = "list_schedules"
-	MsgGetSchedule                 MessageType = "get_schedule"
-	MsgPauseSchedule               MessageType = "pause_schedule"
-	MsgResumeSchedule              MessageType = "resume_schedule"
-	MsgBackfillSchedule            MessageType = "backfill_schedule"
-	MsgTriggerSchedule             MessageType = "trigger_schedule"
-	MsgListApplicationVersions     MessageType = "list_application_versions"
-	MsgSetLatestApplicationVersion MessageType = "set_latest_application_version"
-	MsgGetWorkflowEvents           MessageType = "get_workflow_events"
-	MsgGetWorkflowNotifications    MessageType = "get_workflow_notifications"
-	MsgGetWorkflowStreams          MessageType = "get_workflow_streams"
-	MsgGetWorkflowAggregates       MessageType = "get_workflow_aggregates"
-	MsgGetStepAggregates           MessageType = "get_step_aggregates"
-	MsgForkFromFailure             MessageType = "fork_from_failure"
-	MsgListQueues                  MessageType = "list_queues"
-	MsgGetQueue                    MessageType = "get_queue"
+	MsgExecutorInfo             MessageType = "executor_info"
+	MsgRecovery                 MessageType = "recovery"
+	MsgCancel                   MessageType = "cancel"
+	MsgListWorkflows            MessageType = "list_workflows"
+	MsgListQueuedWorkflows      MessageType = "list_queued_workflows"
+	MsgResume                   MessageType = "resume"
+	MsgGetWorkflow              MessageType = "get_workflow"
+	MsgExistPendingWorkflows    MessageType = "exist_pending_workflows"
+	MsgListSteps                MessageType = "list_steps"
+	MsgForkWorkflow             MessageType = "fork_workflow"
+	MsgGetMetrics               MessageType = "get_metrics"
+	MsgExportWorkflow           MessageType = "export_workflow"
+	MsgListSchedules            MessageType = "list_schedules"
+	MsgGetSchedule              MessageType = "get_schedule"
+	MsgListApplicationVersions  MessageType = "list_application_versions"
+	MsgGetWorkflowEvents        MessageType = "get_workflow_events"
+	MsgGetWorkflowNotifications MessageType = "get_workflow_notifications"
+	MsgGetWorkflowStreams       MessageType = "get_workflow_streams"
+	MsgGetWorkflowAggregates    MessageType = "get_workflow_aggregates"
+	MsgGetStepAggregates        MessageType = "get_step_aggregates"
+	MsgListQueues               MessageType = "list_queues"
+	MsgGetQueue                 MessageType = "get_queue"
 )
 
 // BaseMessage is the common envelope present on every frame in both directions.

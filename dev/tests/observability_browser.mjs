@@ -99,6 +99,13 @@ async function fakeExecutor(base, state, executor = state.app) {
   socket.addEventListener('close', () => peers.delete(socket));
   socket.addEventListener('message', event => {
     const request = JSON.parse(event.data), b = request.body || {}, id = request.workflow_id;
+    // Recovery discovery is separate from Console read-cost assertions.
+    if (request.type === 'get_workflow_aggregates' && b.group_by_executor_id && b.group_by_application_version) {
+      assert.deepEqual(b.status, ['PENDING']);
+      assert.deepEqual(b.application_name, [state.app]);
+      socket.send(JSON.stringify({ type: request.type, request_id: request.request_id, output: [] }));
+      return;
+    }
     state.reads.push(request);
     let response;
     switch (request.type) {

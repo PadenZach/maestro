@@ -17,14 +17,11 @@ from pathlib import Path
 from postgres_gate import (
     ROOT,
     create_database,
-    initdb_command,
-    postgres_command,
+    postgres_cluster,
     postgres_database_url,
     request_json,
     reserve_loopback_port,
-    run_isolated_gate,
     sanitized_environment,
-    validate_postgres_bin,
     wait_for,
 )
 
@@ -250,52 +247,10 @@ def run_case(binary, pg_bin, socket_dir, pg_port, environment, temp, version, ca
 
 def run(binary, pg_bin, temp, versions):
     env = sanitized_environment(os.environ, temp)
-    validate_postgres_bin(pg_bin, env)
-    cluster, socket_dir = temp / "cluster", temp / "socket"
-    socket_dir.mkdir(mode=0o700)
-    subprocess.run(
-        initdb_command(pg_bin, cluster),
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-        timeout=30,
-    )
-    port = reserve_loopback_port()
-    with (temp / "postgres.log").open("w") as log:
-        postgres = subprocess.Popen(
-            postgres_command(pg_bin, cluster, socket_dir, port),
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-        try:
-            wait_for(
-                lambda: subprocess.run(
-                    [
-                        str(pg_bin / "pg_isready"),
-                        "-h",
-                        str(socket_dir),
-                        "-p",
-                        str(port),
-                        "-U",
-                        "gate",
-                        "-d",
-                        "postgres",
-                    ],
-                    env=env,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                ).returncode
-                == 0,
-                time.monotonic() + 15,
-                "owned Postgres",
-            )
-            for version in versions:
-                for case in ("survivor", "restart", "outage", "lost_reply"):
-                    run_case(binary, pg_bin, socket_dir, port, env, temp, version, case)
-        finally:
-            stop(postgres)
+    with postgres_cluster(pg_bin, temp, env) as (socket_dir, port):
+        for version in versions:
+            for case in ("survivor", "restart", "outage", "lost_reply"):
+                run_case(binary, pg_bin, socket_dir, port, env, temp, version, case)
 
 
 def main():
@@ -305,29 +260,13 @@ def main():
         "--postgres-bin", type=Path, default=os.environ.get("POSTGRES18_BIN")
     )
     parser.add_argument("--version", action="append", choices=("2.31.1", "3.1.0"))
-    parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.postgres_bin is None:
         parser.error("--postgres-bin or POSTGRES18_BIN is required")
-    if args.temp:
-        run(
-            args.binary.resolve(),
-            args.postgres_bin.resolve(),
-            args.temp,
-            args.version or ("2.31.1", "3.1.0"),
-        )
-        return
     with tempfile.TemporaryDirectory(prefix="maestro-recovery-") as scratch:
-        command = [
-            sys.executable,
-            "-B",
-            str(Path(__file__).resolve()),
-            *sys.argv[1:],
-            "--temp",
-            scratch,
-        ]
         try:
-            run_isolated_gate(command, os.environ.copy(), timeout=300)
+            run(args.binary.resolve(), args.postgres_bin.resolve(), Path(scratch),
+                args.version or ("2.31.1", "3.1.0"))
         except BaseException:
             # Only gate-owned application logs; no inherited configuration.
             for log in Path(scratch).glob("*/*.log"):

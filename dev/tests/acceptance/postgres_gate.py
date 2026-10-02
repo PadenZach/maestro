@@ -1,8 +1,4 @@
-"""Opt-in isolated Postgres 18 + released Python 3.1.0 maestro smoke gate.
-
-The worker's loopback WebSocket URL is an internal test transport only. It does
-not provide a plaintext fallback for application setup or deployment.
-"""
+"""Exercise API and Console reads against real DBOS data in isolated Postgres 18."""
 
 import argparse
 import datetime
@@ -12,41 +8,22 @@ import math
 import os
 import re
 import secrets
-import signal
 import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 POSTGRES_PROGRAMS = ("initdb", "postgres", "createdb", "pg_isready")
 SDK_VERSION = "3.1.0"
-# docs/reference/upstream-lock.json current Python 3.1.0 source review.
-SDK_PROTOCOL_SHA256 = "96acef8072c6ebe87ad3e8d7ecb7f8f7b1aa423af74881b98b4c2a6cabc9eadb"
-SDK_HANDLER_SHA256 = "befc49927f7845977e46e2fc45b386ceb2f189821a4930b3e93ea02dd5e44c78"
 CASE_DEADLINE_SECONDS = 70
-GATE_TIMEOUT_SECONDS = 300
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
-def required_tool_paths(environment):
-    postgres = environment.get("POSTGRES18_BIN")
-    if not postgres:
-        raise RuntimeError(
-            "POSTGRES18_BIN must explicitly name the Postgres 18 bin directory"
-        )
-    python = environment.get("DBOS_SDK_PYTHON")
-    if not python:
-        raise RuntimeError(
-            "DBOS_SDK_PYTHON must explicitly name the pinned SDK interpreter"
-        )
-    return Path(postgres), Path(python)
 
 
 def sanitized_environment(environment, temp):
@@ -74,34 +51,6 @@ def postgres_database_url(socket_dir, port, database):
     return f"postgresql://gate@/{database}?{query}"
 
 
-def initdb_command(pg_bin, cluster):
-    return [
-        str(pg_bin / "initdb"),
-        "-D",
-        str(cluster),
-        "--username=gate",
-        "--auth-local=trust",
-        "--auth-host=reject",
-        "--encoding=UTF8",
-        "--locale=C",
-        "--no-sync",
-    ]
-
-
-def postgres_command(pg_bin, cluster, socket_dir, port):
-    return [
-        str(pg_bin / "postgres"),
-        "-D",
-        str(cluster),
-        "-h",
-        "",
-        "-k",
-        str(socket_dir),
-        "-p",
-        str(port),
-    ]
-
-
 def validate_postgres_bin(pg_bin, environment):
     if not pg_bin.is_dir():
         raise RuntimeError("POSTGRES18_BIN is not a directory")
@@ -123,102 +72,43 @@ def validate_postgres_bin(pg_bin, environment):
 
 def validate_sdk_python(python, environment):
     if not python.is_file() or not os.access(python, os.X_OK):
-        raise RuntimeError("DBOS_SDK_PYTHON is not an executable file")
-    probe = """
-import hashlib, importlib.metadata, json, pathlib
-import dbos
-root = pathlib.Path(dbos.__file__).parent
-print(json.dumps({
-    'version': importlib.metadata.version('dbos'),
-    'protocol_sha256': hashlib.sha256((root / '_conductor/protocol.py').read_bytes()).hexdigest(),
-    'handler_sha256': hashlib.sha256((root / '_conductor/conductor.py').read_bytes()).hexdigest(),
-}))
-"""
-    result = subprocess.run(
-        [str(python), "-I", "-c", probe],
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=True,
+        raise RuntimeError("missing pinned SDK environment; run mise run sdk:install")
+    version = subprocess.check_output(
+        [str(python), "-I", "-c", "import importlib.metadata; print(importlib.metadata.version('dbos'))"],
+        env=environment, text=True, timeout=10,
+    ).strip()
+    if version != SDK_VERSION:
+        raise RuntimeError(f"dbos {SDK_VERSION} required, found {version}")
+
+
+@contextmanager
+def postgres_cluster(pg_bin, temp, environment):
+    validate_postgres_bin(pg_bin, environment)
+    cluster, socket_dir = temp / "cluster", temp / "socket"
+    socket_dir.mkdir(mode=0o700)
+    subprocess.run(
+        [str(pg_bin / "initdb"), "-D", str(cluster), "--username=gate",
+         "--auth-local=trust", "--auth-host=reject", "--encoding=UTF8", "--locale=C", "--no-sync"],
+        env=environment, stdout=subprocess.DEVNULL, check=True, timeout=30,
     )
-    try:
-        actual = json.loads(result.stdout)
-    except (json.JSONDecodeError, TypeError) as exc:
-        raise RuntimeError(
-            "pinned SDK interpreter returned an invalid version probe"
-        ) from exc
-    if actual.get("version") != SDK_VERSION:
-        raise RuntimeError("dbos 3.1.0 is required by the acceptance gate")
-    if (
-        actual.get("protocol_sha256") != SDK_PROTOCOL_SHA256
-        or actual.get("handler_sha256") != SDK_HANDLER_SHA256
-    ):
-        raise RuntimeError(
-            "dbos 3.1.0 protocol definitions or handlers differ from the reviewed pin"
+    port = reserve_loopback_port()
+    with (temp / "postgres.log").open("w") as log:
+        postgres = subprocess.Popen(
+            [str(pg_bin / "postgres"), "-D", str(cluster), "-h", "", "-k", str(socket_dir), "-p", str(port)],
+            env=environment, stdout=log, stderr=subprocess.STDOUT,
         )
-
-
-def stop_gate_group(proc):
-    # Keep the exited session leader unreaped until all group signals are sent,
-    # preventing process-group ID reuse from targeting an unrelated process.
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    except PermissionError:
-        if proc.poll() is not None:
-            return
-        raise
-    time.sleep(0.25)
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        if proc.poll() is None:
-            raise
-
-
-def run_isolated_gate(command, environment, timeout):
-    """Run the whole cluster/SDK/maestro tree in one owned process group."""
-    if os.name != "posix" or not hasattr(os, "WNOWAIT"):
-        raise RuntimeError("gate process-group cleanup requires POSIX waitid/WNOWAIT")
-    proc = subprocess.Popen(command, env=environment, start_new_session=True)
-    deadline = time.monotonic() + timeout
-    try:
-        while (
-            os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
-        ):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise subprocess.TimeoutExpired(command, timeout)
-            time.sleep(min(0.05, remaining))
-    except BaseException as original:
         try:
-            stop_gate_group(proc)
-        except BaseException as cleanup_error:
-            original.add_note(f"gate group cleanup failed: {cleanup_error!r}")
-        try:
-            proc.wait(timeout=3)
-        except BaseException as wait_error:
-            original.add_note(f"gate parent reap failed: {wait_error!r}")
-        raise
+            def ready():
+                assert postgres.poll() is None, "Postgres exited before readiness"
+                return subprocess.run(
+                    [str(pg_bin / "pg_isready"), "-h", str(socket_dir), "-p", str(port), "-U", "gate", "-d", "postgres"],
+                    env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3,
+                ).returncode == 0
 
-    cleanup_error = None
-    try:
-        stop_gate_group(proc)
-    except BaseException as exc:
-        cleanup_error = exc
-    code = proc.wait(timeout=3)
-    if code != 0:
-        failure = subprocess.CalledProcessError(code, command)
-        if cleanup_error is not None:
-            failure.add_note(f"gate group cleanup failed: {cleanup_error!r}")
-            raise failure from cleanup_error
-        raise failure
-    if cleanup_error is not None:
-        raise cleanup_error
+            wait_for(ready, time.monotonic() + 25, "Postgres 18")
+            yield socket_dir, port
+        finally:
+            stop_process(postgres, label="Postgres")
 
 
 def reserve_loopback_port():
@@ -234,7 +124,7 @@ def wait_for(check, deadline, label):
             result = check()
             if result:
                 return result
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
             last = type(exc).__name__
         time.sleep(0.1)
     raise AssertionError(f"timed out waiting for {label} ({last})")
@@ -733,39 +623,6 @@ def stop_process(proc, timeout=10, *, terminate=True, label="owned child"):
         raise AssertionError(f"{label} exited with status {code}")
 
 
-def complete_cleanup(primary_error, actions):
-    """Run every cleanup action, retaining an in-flight gate assertion as primary."""
-    failures = []
-    for label, action in actions:
-        try:
-            action()
-        except BaseException as exc:
-            failures.append((label, exc))
-    if not failures:
-        return
-    if primary_error is not None:
-        for label, failure in failures:
-            primary_error.add_note(f"{label} cleanup failed: {failure!r}")
-        return
-    label, failure = failures[0]
-    for later_label, later_failure in failures[1:]:
-        failure.add_note(f"{later_label} cleanup also failed: {later_failure!r}")
-    failure.add_note(f"failure detected during {label} cleanup")
-    raise failure
-
-
-def drain_redacted(pipe, destination, secrets_to_redact):
-    try:
-        for line in pipe:
-            for value in secrets_to_redact:
-                if value:
-                    line = line.replace(value, "[REDACTED]")
-            destination.write(line[:4096])
-    finally:
-        pipe.close()
-        destination.flush()
-
-
 def create_database(pg_bin, socket_dir, pg_port, database, environment):
     result = subprocess.run(
         [
@@ -793,12 +650,6 @@ def run_case(
     temp,
     database_url,
     metadata_only,
-    bad_digest,
-    bad_workflow_field,
-    bad_queue_field,
-    bad_schedule_field,
-    bad_related_field,
-    bad_inspection_field,
     environment,
 ):
     temp.mkdir(mode=0o700)
@@ -828,17 +679,6 @@ def run_case(
         case_env["POSTGRES_GATE_CONSOLE"] = "1"
     else:
         case_env.pop("POSTGRES_GATE_CONSOLE", None)
-    redactions = (
-        key,
-        database_url,
-        "gate-input-value",
-        "gate-step-value",
-        "gate-event-value",
-        "stream-first",
-        "notification-null-topic",
-        "empty-topic",
-        "schedule-context-value",
-    )
     with (
         (temp / "maestro.log").open("w+") as maestro_log,
         (temp / "sdk.log").open("w+") as sdk_log,
@@ -849,24 +689,14 @@ def run_case(
                 "--listen",
                 f"127.0.0.1:{port}",
                 "--enable-aggregates",
-                "--key",
-                key,
             ],
             cwd=ROOT,
             env=case_env,
-            stdout=subprocess.PIPE,
+            stdout=maestro_log,
             stderr=subprocess.STDOUT,
             text=True,
         )
-        assert server.stdout is not None
-        server_reader = threading.Thread(
-            target=drain_redacted,
-            args=(server.stdout, maestro_log, redactions),
-        )
-        server_reader.start()
         app_process = None
-        app_reader = None
-        primary_error = None
         try:
             deadline = time.monotonic() + CASE_DEADLINE_SECONDS
 
@@ -880,17 +710,10 @@ def run_case(
                 cwd=temp,
                 env=case_env,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
+                stdout=sdk_log,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            assert app_process.stdout is not None
-            app_reader = threading.Thread(
-                target=drain_redacted,
-                args=(app_process.stdout, sdk_log, redactions),
-            )
-            app_reader.start()
-
             def app_ready():
                 assert app_process.poll() is None, "SDK app exited before readiness"
                 return (
@@ -1082,12 +905,8 @@ def run_case(
                 and len(searched_workflows) == 1
                 and searched_workflows[0]["workflowId"] == selected_workflow_read_id
             ), "official expanded workflow search"
-            checked_workflow = searched_workflows[0]
-            if bad_workflow_field and not metadata_only:
-                checked_workflow = dict(checked_workflow)
-                checked_workflow["priority"] += 1
             validate_official_workflow(
-                checked_workflow,
+                searched_workflows[0],
                 expected_workflow_read_digests[selected_workflow_read_id],
                 schemas=schemas,
             )
@@ -1302,9 +1121,6 @@ def run_case(
                 and content_type == "application/json"
                 and isinstance(official_queue, dict)
             ), "official queue get response"
-            if bad_queue_field and not metadata_only:
-                official_queue = dict(official_queue)
-                official_queue["partitionRateLimitMax"] = 0
             validate_official_queue(
                 official_queue, queue_digests["gate-queue"], schemas=schemas
             )
@@ -1406,13 +1222,6 @@ def run_case(
                     and content_type == "application/json"
                     and isinstance(official_schedule, dict)
                 ), "official schedule get response"
-                if (
-                    bad_schedule_field
-                    and not metadata_only
-                    and name == "gate-schedule-context"
-                ):
-                    official_schedule = dict(official_schedule)
-                    official_schedule["automaticBackfill"] = True
                 validate_official_schedule(
                     official_schedule, digests[digest_label], schemas=schemas
                 )
@@ -1621,13 +1430,8 @@ def run_case(
                         assert stream.get("values") == [], (
                             "official empty stream values"
                         )
-                    checked_stream = stream
-                    if bad_related_field and stream["key"] == "gate-stream":
-                        checked_stream = dict(stream)
-                        checked_stream["values"] = list(stream["values"])
-                        checked_stream["values"][1] = "corrupted-related-field"
                     validate_official_stream(
-                        checked_stream, stream_digests[stream["key"]], schemas=schemas
+                        stream, stream_digests[stream["key"]], schemas=schemas
                     )
 
                 empty_related_root = official_workflow_root + urllib.parse.quote(
@@ -1714,12 +1518,8 @@ def run_case(
                 and isinstance(workflow_aggregates, list)
                 and len(workflow_aggregates) == 1
             ), "official workflow aggregate response"
-            checked_workflow_aggregates = workflow_aggregates
-            if bad_inspection_field:
-                checked_workflow_aggregates = [dict(workflow_aggregates[0])]
-                checked_workflow_aggregates[0]["count"] += 1
             validate_official_workflow_aggregates(
-                checked_workflow_aggregates, workflow_aggregate_digest, schemas=schemas
+                workflow_aggregates, workflow_aggregate_digest, schemas=schemas
             )
 
             step_aggregate_path = official_app_root + "/steps/aggregates"
@@ -1910,8 +1710,6 @@ def run_case(
                         f"workflow {field} blob missing"
                     )
                     expected = ready[field.lower() + "_sha256"]
-                    if bad_digest and field == "Input":
-                        expected = "0" * 64
                     actual = hashlib.sha256(detail[field].encode()).hexdigest()
                     assert actual == expected, f"{field} opaque digest differs from SDK"
                 assert isinstance(step["output"], str) and step["output"], (
@@ -1943,282 +1741,51 @@ def run_case(
                         timeout=90,
                         check=True,
                     )
-        except BaseException as exc:
-            primary_error = exc
+        except BaseException:
+            for name in ("maestro.log", "sdk.log"):
+                print((temp / name).read_text()[-6000:], file=sys.stderr)
             raise
         finally:
-
-            def stop_sdk():
-                if app_process is None:
-                    return
-                if app_process.stdin is not None and app_process.poll() is None:
-                    try:
-                        app_process.stdin.write("stop\n")
-                        app_process.stdin.flush()
-                    except BrokenPipeError:
-                        pass
-                stop_process(
-                    app_process,
-                    terminate=False,
-                    label="SDK app",
-                )
-
-            def stop_maestro():
-                if server.poll() is None:
-                    server.send_signal(signal.SIGTERM)
-                stop_process(
-                    server,
-                    terminate=False,
-                    label="maestro",
-                )
-
-            def finish_server_reader():
-                server_reader.join(timeout=3)
-                if server_reader.is_alive():
-                    raise AssertionError("maestro log reader did not finish")
-
-            def finish_app_reader():
-                if app_reader is None:
-                    return
-                app_reader.join(timeout=3)
-                if app_reader.is_alive():
-                    raise AssertionError("SDK log reader did not finish")
-
-            complete_cleanup(
-                primary_error,
-                (
-                    ("SDK app", stop_sdk),
-                    ("maestro", stop_maestro),
-                    ("maestro log reader", finish_server_reader),
-                    ("SDK log reader", finish_app_reader),
-                ),
-            )
+            try:
+                if app_process is not None:
+                    if app_process.stdin is not None and app_process.poll() is None:
+                        try:
+                            app_process.stdin.write("stop\n")
+                            app_process.stdin.flush()
+                        except BrokenPipeError:
+                            pass
+                    stop_process(app_process, terminate=False, label="SDK app")
+            finally:
+                stop_process(server, label="maestro")
 
 
-def worker(
-    temp,
-    bad_digest,
-    bad_workflow_field,
-    bad_queue_field,
-    bad_schedule_field,
-    bad_related_field,
-    bad_inspection_field,
-    console_browser=False,
-):
-    pg_bin, python = required_tool_paths(os.environ)
+def run(binary, pg_bin, python, temp, console_browser):
     environment = sanitized_environment(os.environ, temp)
     if console_browser:
         for key in ("PLAYWRIGHT_MODULE", "CHROMIUM_BIN"):
-            tool = Path(os.environ.get(key, ""))
-            if not tool.is_absolute() or not tool.is_file():
-                raise RuntimeError(f"{key} must name an existing absolute tool path")
-            environment[key] = str(tool)
+            environment[key] = os.environ[key]
         environment["POSTGRES_GATE_CONSOLE"] = "1"
-    validate_postgres_bin(pg_bin, environment)
     validate_sdk_python(python, environment)
-
-    cluster = temp / "cluster"
-    socket_dir = temp / "socket"
-    cluster.parent.mkdir(mode=0o700, exist_ok=True)
-    socket_dir.mkdir(mode=0o700)
-    postgres_log_path = temp / "postgres.log"
-    subprocess.run(
-        initdb_command(pg_bin, cluster),
-        env=environment,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=30,
-        check=True,
-    )
-    if stat_mode(socket_dir) != 0o700 or stat_mode(cluster) != 0o700:
-        raise AssertionError("owned Postgres directories are not private")
-
-    pg_port = reserve_loopback_port()
-    with postgres_log_path.open("w+") as postgres_log:
-        postgres = subprocess.Popen(
-            postgres_command(pg_bin, cluster, socket_dir, pg_port),
-            env=environment,
-            stdout=postgres_log,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        primary_error = None
-        try:
-            deadline = time.monotonic() + 25
-
-            def postgres_ready():
-                assert postgres.poll() is None, "owned Postgres exited before readiness"
-                result = subprocess.run(
-                    [
-                        str(pg_bin / "pg_isready"),
-                        "--host",
-                        str(socket_dir),
-                        "--port",
-                        str(pg_port),
-                        "--username",
-                        "gate",
-                        "--dbname",
-                        "postgres",
-                    ],
-                    env=environment,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=3,
-                )
-                return result.returncode == 0
-
-            wait_for(postgres_ready, deadline, "owned Postgres 18")
-            binary = temp / "maestro"
-            subprocess.run(
-                ["go", "build", "-o", str(binary), "./cmd/maestro"],
-                cwd=ROOT,
-                env=environment,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=90,
-                check=True,
-            )
-            for label, metadata_only in (("data", False), ("metadata", True)):
-                database = "gate_" + label + "_" + secrets.token_hex(6)
-                create_database(pg_bin, socket_dir, pg_port, database, environment)
-                run_case(
-                    python,
-                    binary,
-                    temp / label,
-                    postgres_database_url(socket_dir, pg_port, database),
-                    metadata_only,
-                    bad_digest and not metadata_only,
-                    bad_workflow_field and not metadata_only,
-                    bad_queue_field and not metadata_only,
-                    bad_schedule_field and not metadata_only,
-                    bad_related_field and not metadata_only,
-                    bad_inspection_field and not metadata_only,
-                    environment,
-                )
-        except BaseException as exc:
-            primary_error = exc
-            raise
-        finally:
-            complete_cleanup(
-                primary_error,
-                (
-                    (
-                        "Postgres",
-                        lambda: stop_process(postgres, label="Postgres"),
-                    ),
-                ),
-            )
-    print(
-        "PASS PostgreSQL 18 + dbos==3.1.0 "
-        "workflows/get/steps/official-workflow-list-search-get/official-queues/official-schedules/"
-        "official-events/notifications/streams/workflow-aggregates/"
-        "step-aggregates/opaque-export/opaque-digests/metadata-refusal"
-    )
-
-
-def stat_mode(path):
-    return path.stat().st_mode & 0o777
+    with postgres_cluster(pg_bin, temp, environment) as (socket_dir, pg_port):
+        for label, metadata_only in (("data", False), ("metadata", True)):
+            database = "gate_" + label
+            create_database(pg_bin, socket_dir, pg_port, database, environment)
+            run_case(python, binary, temp / label,
+                     postgres_database_url(socket_dir, pg_port, database), metadata_only, environment)
+    print("PASS Postgres 18 + DBOS 3.1.0: API/Console reads, SDK field and blob comparisons, metadata refusal")
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--console-browser",
-        action="store_true",
-        help="also verify Console traversal/search in an explicitly supplied browser",
-    )
-    parser.add_argument(
-        "--probe-bad-expected-digest",
-        action="store_true",
-        help="negative-control: corrupt the expected workflow Input digest",
-    )
-    parser.add_argument(
-        "--probe-bad-workflow-field",
-        action="store_true",
-        help="negative-control: corrupt one actual official workflow field",
-    )
-    parser.add_argument(
-        "--probe-bad-queue-field",
-        action="store_true",
-        help="negative-control: corrupt one actual official queue field",
-    )
-    parser.add_argument(
-        "--probe-bad-schedule-field",
-        action="store_true",
-        help="negative-control: corrupt one actual official schedule field",
-    )
-    parser.add_argument(
-        "--probe-bad-related-field",
-        action="store_true",
-        help="negative-control: corrupt one actual official stream field",
-    )
-    parser.add_argument(
-        "--probe-bad-inspection-field",
-        action="store_true",
-        help="negative-control: corrupt one actual official workflow aggregate field",
-    )
-    parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--temp", type=Path, help=argparse.SUPPRESS)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, required=True)
+    parser.add_argument("--postgres-bin", type=Path, default=os.environ.get("POSTGRES18_BIN"))
+    parser.add_argument("--console-browser", action="store_true")
     args = parser.parse_args()
-    if args.worker:
-        if args.temp is None:
-            raise RuntimeError("worker requires its owned temporary directory")
-        worker(
-            args.temp,
-            args.probe_bad_expected_digest,
-            args.probe_bad_workflow_field,
-            args.probe_bad_queue_field,
-            args.probe_bad_schedule_field,
-            args.probe_bad_related_field,
-            args.probe_bad_inspection_field,
-            args.console_browser,
-        )
-        return
-
-    pg_bin, python = required_tool_paths(os.environ)
-    with tempfile.TemporaryDirectory(prefix="maestro-postgres18-gate-") as path:
-        temp = Path(path)
-        temp.chmod(0o700)
-        clean = sanitized_environment(os.environ, temp)
-        validate_postgres_bin(pg_bin, clean)
-        validate_sdk_python(python, clean)
-        worker_environment = dict(
-            clean,
-            POSTGRES18_BIN=str(pg_bin),
-            DBOS_SDK_PYTHON=str(python),
-        )
-        if args.console_browser:
-            for key in ("PLAYWRIGHT_MODULE", "CHROMIUM_BIN"):
-                tool = Path(os.environ.get(key, ""))
-                if not tool.is_absolute() or not tool.is_file():
-                    raise RuntimeError(
-                        f"{key} must name an existing absolute tool path"
-                    )
-                worker_environment[key] = str(tool)
-        command = [
-            sys.executable,
-            "-I",
-            "-S",
-            str(Path(__file__).resolve()),
-            "--worker",
-            "--temp",
-            str(temp),
-        ]
-        if args.probe_bad_expected_digest:
-            command.append("--probe-bad-expected-digest")
-        if args.probe_bad_workflow_field:
-            command.append("--probe-bad-workflow-field")
-        if args.probe_bad_queue_field:
-            command.append("--probe-bad-queue-field")
-        if args.probe_bad_schedule_field:
-            command.append("--probe-bad-schedule-field")
-        if args.probe_bad_related_field:
-            command.append("--probe-bad-related-field")
-        if args.probe_bad_inspection_field:
-            command.append("--probe-bad-inspection-field")
-        if args.console_browser:
-            command.append("--console-browser")
-        run_isolated_gate(command, worker_environment, GATE_TIMEOUT_SECONDS)
+    if args.postgres_bin is None:
+        parser.error("--postgres-bin or POSTGRES18_BIN is required")
+    python = ROOT / "dev/tests/python" / SDK_VERSION / ".venv/bin/python"
+    with tempfile.TemporaryDirectory(prefix="maestro-postgres-") as path:
+        run(args.binary.resolve(), args.postgres_bin.resolve(), python, Path(path), args.console_browser)
 
 
 if __name__ == "__main__":

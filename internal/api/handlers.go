@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -228,7 +230,7 @@ func partialError(w http.ResponseWriter, err error) {
 
 func partialMessage(w http.ResponseWriter, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, `<div class="flash err">%s</div>`, htmlEscape(message))
+	fmt.Fprintf(w, `<div class="flash err">%s</div>`, html.EscapeString(message))
 }
 
 // --- HTML handlers ----------------------------------------------------------
@@ -630,14 +632,7 @@ func parseFilter(r *http.Request) (filterState, error) {
 func workflowFilterStatuses(f filterState) []string {
 	statuses := append([]string(nil), knownStatuses...)
 	for _, status := range f.statusValues() {
-		found := false
-		for _, known := range statuses {
-			if status == known {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(statuses, status) {
 			statuses = append(statuses, status)
 		}
 	}
@@ -695,23 +690,6 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
-}
-
-func htmlEscape(s string) string {
-	r := make([]byte, 0, len(s))
-	for _, c := range []byte(s) {
-		switch c {
-		case '<':
-			r = append(r, "&lt;"...)
-		case '>':
-			r = append(r, "&gt;"...)
-		case '&':
-			r = append(r, "&amp;"...)
-		default:
-			r = append(r, c)
-		}
-	}
-	return string(r)
 }
 
 func workflowsCrumbs(app string) []crumb {

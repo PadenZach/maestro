@@ -31,15 +31,9 @@ func (s *Server) httpAPI() huma.API {
 	}
 	cfg.Formats = map[string]huma.Format{"application/json": format, "json": format}
 	cfg.Info.Description = "Maestro's local JSON reads use /api paths and preserve SDK field names. " +
-		"The [Console](/) serves HTML separately. Executors connect over WebSocket and answer server-initiated RPC requests; " +
-		"see the [executor protocol](https://github.com/zpaden/maestro/blob/main/docs/EXECUTOR_PROTOCOL.md). " +
+		"The [Console](/) serves HTML separately. Executors connect over WebSocket and answer server-initiated RPC requests. " +
 		"Authentication and deployment access policies belong to the external gateway."
 	cfg.Info.Description += fmt.Sprintf(" The /v2 routes serve organization %q, documented from the Go request and response models. They expose 14 read operations; full Conductor compatibility is not claimed.", s.cfg.OrgName)
-	if s.cfg.AllowRemote {
-		cfg.Info.Description += " Remote access is enabled for deployment behind an external gateway."
-	} else {
-		cfg.Info.Description += " The listener and Conductor API clients must use loopback."
-	}
 	return humago.New(&documentationMux{ServeMux: s.mux}, cfg)
 }
 
@@ -135,7 +129,7 @@ func (s *Server) conductorRoutes(api huma.API) {
 				"200": {Description: "OK", Content: map[string]*huma.MediaType{"application/json": {Schema: response}}},
 			},
 		}
-		for _, status := range []int{400, 403, 404, 502, 503} {
+		for _, status := range []int{400, 404, 502, 503} {
 			op.Responses[strconv.Itoa(status)] = &huma.Response{
 				Description: http.StatusText(status),
 				Content:     map[string]*huma.MediaType{"application/problem+json": {Schema: registry.Schema(reflect.TypeFor[Problem](), true, "")}},

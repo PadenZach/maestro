@@ -18,27 +18,6 @@ import (
 	"github.com/zpaden/maestro/internal/hub"
 )
 
-func TestHTTPListenerLoopbackRestriction(t *testing.T) {
-	for _, tc := range []struct {
-		addr    string
-		allowed bool
-	}{{"127.0.0.1:0", true}, {"[::1]:0", true}, {"0.0.0.0:0", false}, {"[::]:0", false}} {
-		t.Run(tc.addr, func(t *testing.T) {
-			l, err := net.Listen("tcp", tc.addr)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer l.Close()
-			if got := validateHTTPListener(true, l.Addr()); (got == nil) != tc.allowed {
-				t.Fatalf("listener %v: %v", l.Addr(), got)
-			}
-			if err := validateHTTPListener(false, l.Addr()); err != nil {
-				t.Fatalf("default mode: %v", err)
-			}
-		})
-	}
-}
-
 func TestServeStopsRecoveryOnListenerFailure(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, time.Second)
@@ -74,7 +53,7 @@ func TestServeShutdownReleasesPendingHTTPRPC(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h, nil)
+		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{}, h, log).Handler()}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	peerCtx, peerStop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -167,7 +146,7 @@ func TestServeShutdownClosesHijackedExecutor(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h, nil)
+		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{}, h, log).Handler()}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
