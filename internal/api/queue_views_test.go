@@ -248,7 +248,7 @@ func TestQueueConsoleListLinksAndHostileNameRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Path != "/apps/fixture-app/workflows" || parsed.Query().Get("queue") != hostile {
+	if parsed.Path != "/apps/fixture-app/workflows" || parsed.Query().Get("queue") != hostile || parsed.Query().Get("children") != "true" {
 		t.Fatalf("queue-to-workflow link did not preserve name: %q", workflowsHref)
 	}
 }

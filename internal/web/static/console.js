@@ -1,5 +1,12 @@
 "use strict";
 
+document.addEventListener("htmx:beforeSwap", event => {
+  if (event.detail.target?.id === "wf-rows" && event.detail.xhr.status === 400) {
+    event.detail.shouldSwap = true;
+    event.detail.isError = false;
+  }
+});
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("versionControl", () => ({
     versionRoot: null,

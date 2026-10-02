@@ -118,8 +118,8 @@ func (s *Server) conductorRoutes(api huma.API) {
 		{http.MethodGet, "/queues/{name}", "getQueue", "Get a queue", reflect.TypeFor[Queue](), nil, nil, s.localV2GetQueue},
 		{http.MethodGet, "/workflows", "listWorkflows", "List workflows", reflect.TypeFor[[]Workflow](), reflect.TypeFor[workflowListQuery](), nil, s.localV2ListWorkflows},
 		{http.MethodPost, "/workflows/search", "searchWorkflows", "Search workflows", reflect.TypeFor[[]Workflow](), nil, reflect.TypeFor[WorkflowSearchBody](), s.localV2Search},
-		{http.MethodPost, "/workflows/aggregates", "getWorkflowAggregates", "Aggregate workflows", reflect.TypeFor[[]WorkflowAggregate](), nil, reflect.TypeFor[WorkflowAggregatesBody](), s.localV2WorkflowAggregates},
-		{http.MethodPost, "/steps/aggregates", "getStepAggregates", "Aggregate steps", reflect.TypeFor[[]StepAggregate](), nil, reflect.TypeFor[StepAggregatesBody](), s.localV2StepAggregates},
+		{http.MethodPost, "/workflows/aggregates", "getWorkflowAggregates", "Aggregate workflows", reflect.TypeFor[[]WorkflowAggregate](), nil, reflect.TypeFor[WorkflowAggregatesBody](), s.aggregateHandler(s.localV2WorkflowAggregates)},
+		{http.MethodPost, "/steps/aggregates", "getStepAggregates", "Aggregate steps", reflect.TypeFor[[]StepAggregate](), nil, reflect.TypeFor[StepAggregatesBody](), s.aggregateHandler(s.localV2StepAggregates)},
 		{http.MethodGet, "/workflows/{id}", "getWorkflow", "Get a workflow", reflect.TypeFor[Workflow](), nil, nil, s.localV2Get},
 		{http.MethodGet, "/workflows/{id}/export", "exportWorkflow", "Export a workflow", reflect.TypeFor[ExportWorkflowOutputBody](), reflect.TypeFor[exportQuery](), nil, s.localV2ExportWorkflow},
 		{http.MethodGet, "/workflows/{id}/steps", "listWorkflowSteps", "List workflow steps", reflect.TypeFor[[]Step](), reflect.TypeFor[stepsQuery](), nil, s.localV2Steps},
@@ -144,6 +144,9 @@ func (s *Server) conductorRoutes(api huma.API) {
 				Description: http.StatusText(status),
 				Content:     map[string]*huma.MediaType{"application/problem+json": {Schema: registry.Schema(reflect.TypeFor[Problem](), true, "")}},
 			}
+		}
+		if route.id == "getWorkflowAggregates" || route.id == "getStepAggregates" {
+			op.Description = "Requires --enable-aggregates (or CONDUCTOR_ENABLE_AGGREGATES=true). Disabled by default; returns 404 without dispatching an executor query. Fixed application overview queries are independent of this setting."
 		}
 		for _, part := range strings.Split(op.Path, "/") {
 			if strings.HasPrefix(part, "{") {

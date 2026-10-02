@@ -3,22 +3,42 @@
 <div class="page-head">
   <h1 class="page-title">{{$d.App}}</h1>
   <span class="subtle">Workflows</span>
-  <a href="{{applicationURL $d.App}}/aggregates/workflows">Aggregates</a>
+  {{if $d.AggregatesEnabled}}<a href="{{applicationURL $d.App}}/aggregates/workflows">Aggregates</a>{{end}}
 </div>
 
-<div class="filter-bar">
-  <form hx-get="{{applicationURL $d.App}}/workflows/rows"
-        hx-target="#wf-rows"
-        hx-trigger="input delay:350ms, change, submit"
-        hx-indicator="#wf-loading">
-    <select name="status">
-      <option value="">All statuses</option>
-      {{range $d.Statuses}}<option value="{{.}}" {{if eq . $d.Filter.Status}}selected{{end}}>{{.}}</option>{{end}}
-    </select>
-    <input type="search" name="name" value="{{$d.Filter.Name}}" aria-label="Search workflow names" placeholder="Search by part of workflow name">
-    <input type="search" name="id_prefix" value="{{$d.Filter.IDPrefix}}" placeholder="Search by workflow ID prefix">
-    <input type="text" name="queue" value="{{$d.Filter.Queue}}" aria-label="Queue name" placeholder="Queue name">
-    <span id="wf-loading" class="htmx-indicator">…</span>
+<div class="filter-bar workflow-filter-bar">
+  <form data-workflow-filters method="get" action="{{applicationURL $d.App}}/workflows" hx-get="{{applicationURL $d.App}}/workflows/rows"
+        hx-target="#wf-rows" hx-trigger="input delay:350ms, change, submit" hx-indicator="#wf-loading">
+    <div class="workflow-filter-search">
+      <details id="wf-status" class="workflow-status-filter">
+        <summary><span class="subtle">Status</span><span data-status-label>{{$d.Filter.StatusLabel}}</span></summary>
+        <div class="workflow-status-options">
+          <div role="group" aria-label="Workflow statuses">
+            {{range $d.Statuses}}<label><input type="checkbox" name="status" value="{{.}}" {{if $d.Filter.HasStatus .}}checked{{end}}><span>{{.}}</span></label>{{end}}
+          </div>
+          <button type="button" class="btn" data-clear-status>All statuses</button>
+        </div>
+      </details>
+      <input type="search" name="name" value="{{$d.Filter.Name}}" aria-label="Search workflow names" placeholder="Workflow name">
+      <input type="search" name="id_prefix" value="{{$d.Filter.IDPrefix}}" aria-label="Workflow ID prefix" placeholder="Workflow ID prefix">
+      <input type="text" name="queue" value="{{$d.Filter.Queue}}" aria-label="Queue name" placeholder="Queue">
+    </div>
+    <div class="workflow-filter-dates" role="group" aria-label="Inclusive creation time in UTC">
+      <label for="wf-start">Created from <span class="subtle">UTC</span>
+        <input id="wf-start" type="datetime-local" step="0.001" value="{{utcDateInput $d.Filter.StartTime}}" data-time-bound="wf-start-wire">
+      </label>
+      <input id="wf-start-wire" type="hidden" name="start_time" value="{{$d.Filter.StartTime}}">
+      <label for="wf-end">Created through <span class="subtle">UTC</span>
+        <input id="wf-end" type="datetime-local" step="0.001" value="{{utcDateInput $d.Filter.EndTime}}" data-time-bound="wf-end-wire">
+      </label>
+      <input id="wf-end-wire" type="hidden" name="end_time" value="{{$d.Filter.EndTime}}">
+      <div class="workflow-filter-actions">
+        <label class="workflow-children"><input type="checkbox" name="children" value="true" {{if $d.Filter.IncludeChildren}}checked{{end}}> Show child workflows</label>
+        <button type="submit" class="btn">Apply</button>
+        <a href="{{applicationURL $d.App}}/workflows">Clear filters</a>
+        <span id="wf-loading" class="htmx-indicator" aria-label="Loading workflows">…</span>
+      </div>
+    </div>
   </form>
 </div>
 

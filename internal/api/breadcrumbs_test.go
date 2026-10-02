@@ -27,17 +27,17 @@ func TestConsoleBreadcrumbsPreserveApplicationName(t *testing.T) {
 			found := false
 			for _, link := range links {
 				href := html.UnescapeString(link[1])
-				if href != appPath+"/workflows" {
+				if href != appPath {
 					continue
 				}
 				found = true
 				code, followed := getBody(t, ts.URL+href)
-				if code != 503 || !strings.Contains(followed, "application unavailable") {
+				if code != 200 || !strings.Contains(followed, "No connected executors for this application") {
 					t.Fatalf("breadcrumb lost application identity: %d", code)
 				}
 			}
 			if !found {
-				t.Fatalf("missing path-escaped application breadcrumb %q", appPath+"/workflows")
+				t.Fatalf("missing path-escaped application breadcrumb %q", appPath)
 			}
 		})
 	}

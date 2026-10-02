@@ -1,51 +1,45 @@
-{{define "aggregate_view"}}
-<div id="aggregate-view"
-     hx-on::before-swap="if (event.detail.xhr.status >= 400) { event.detail.shouldSwap = true; event.detail.isError = false; }">
-  <div class="page-head">
-    <h1 class="page-title">{{.App}}</h1><span class="subtle">{{.Title}}</span>
-  </div>
-  <nav class="aggregate-tabs" aria-label="Aggregate type">
-    <a href="{{applicationURL .App}}/aggregates/workflows" {{if eq .Kind "workflows"}}aria-current="page"{{end}}>Workflow aggregates</a>
-    <a href="{{applicationURL .App}}/aggregates/steps" {{if eq .Kind "steps"}}aria-current="page"{{end}}>Step aggregates</a>
-  </nav>
-  <form class="aggregate-form panel" method="get" action="{{.URL}}"
-        hx-get="{{.URL}}" hx-target="#aggregate-view" hx-swap="outerHTML" hx-push-url="true">
-    {{range .Sections}}
-    <details {{if .Expanded}}open{{end}}>
-      <summary>{{.Label}}</summary>
-      {{if eq .Label "Filters"}}<p class="subtle">Leave a filter blank to omit it. Lists accept one exact value per line. Dates include a timezone, for example 2026-01-01T00:00:00Z.</p>{{end}}
-      <div class="aggregate-controls">
-      {{range .Controls}}
-        <label for="aggregate-{{.Name}}">{{.Label}}
-          {{if eq .Kind "boolean"}}
-          <select id="aggregate-{{.Name}}" name="{{.Name}}">
-            <option value="" {{if eq .Value ""}}selected{{end}}>Default</option>
-            <option value="true" {{if eq .Value "true"}}selected{{end}}>Yes</option>
-            <option value="false" {{if eq .Value "false"}}selected{{end}}>No</option>
-          </select>
-          {{else if or (eq .Kind "list") (eq .Kind "object")}}
-          <textarea id="aggregate-{{.Name}}" name="{{.Name}}" rows="2" spellcheck="false">{{.Value}}</textarea>
-          {{else}}
-          <input id="aggregate-{{.Name}}" name="{{.Name}}" value="{{.Value}}" {{if eq .Kind "integer"}}type="number" step="1"{{else}}type="text" placeholder="2026-01-01T00:00:00Z"{{end}}>
-          {{end}}
-        </label>
-      {{end}}
-      </div>
-    </details>
-    {{end}}
-    {{/* POST aggregate RPCs are reads; the Console form itself remains GET. */}}
-    <button type="submit" class="btn">Apply</button>
-    <a href="{{.URL}}">Reset</a>
-  </form>
-  {{if .Error}}
-  <div class="empty" role="alert">{{.Error}}</div>
-  {{else if .Rows}}
-  <div class="aggregate-results" aria-live="polite">
-    <table><thead><tr><th>Group</th>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead>
-    <tbody>{{range .Rows}}<tr><td><pre>{{.Group}}</pre></td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table>
-  </div>
+{{define "aggregate_control"}}
+{{if eq .Kind "statuses"}}
+<fieldset class="aggregate-status-options"><legend>{{.Label}}</legend>{{range .Options}}<label><input type="checkbox" name="status" value="{{.Value}}" {{if .Selected}}checked{{end}}> {{.Value}}</label>{{end}}</fieldset>
+{{else if eq .Kind "boolean"}}
+<label class="aggregate-checkbox"><input type="checkbox" name="{{.Name}}" value="true" {{if eq .Value "true"}}checked{{end}}> {{.Label}}</label>
+{{else}}
+<label class="aggregate-field" for="aggregate-{{.Name}}">{{.Label}}{{if eq .Kind "date"}} (UTC){{end}}
+  {{if eq .Kind "tristate"}}
+  <select id="aggregate-{{.Name}}" name="{{.Name}}"><option value="" {{if eq .Value ""}}selected{{end}}>Any</option><option value="true" {{if eq .Value "true"}}selected{{end}}>Yes</option><option value="false" {{if eq .Value "false"}}selected{{end}}>No</option></select>
+  {{else if eq .Kind "list"}}
+  <textarea id="aggregate-{{.Name}}" name="{{.Name}}" rows="2" placeholder="One exact value per line" spellcheck="false">{{.Value}}</textarea>
+  {{else if eq .Kind "object"}}
+  <textarea id="aggregate-{{.Name}}" name="{{.Name}}" rows="2" placeholder="{}" spellcheck="false">{{.Value}}</textarea>
+  {{else if eq .Kind "seconds"}}
+  <input type="number" id="aggregate-{{.Name}}" name="{{.Name}}" value="{{.Value}}" min="0.001" step="0.001" placeholder="No time buckets">
   {{else}}
-  <div class="empty" role="status">No matching aggregates</div>
+  <input type="datetime-local" id="aggregate-{{.Name}}" name="{{.Name}}" value="{{.DateInput}}" step="0.001">
   {{end}}
+</label>
+{{end}}
+{{end}}
+
+{{define "aggregate_view"}}
+<div id="aggregate-view" hx-on::before-swap="if (event.detail.xhr.status >= 400) { event.detail.shouldSwap = true; event.detail.isError = false; }">
+  <div class="page-head"><h1 class="page-title">{{.App}}</h1><span class="subtle">{{.Title}}</span></div>
+  <nav class="aggregate-tabs" aria-label="Aggregate type">
+    <a href="{{applicationURL .App}}/aggregates/workflows" {{if eq .Kind "workflows"}}aria-current="page"{{end}}>Workflows</a>
+    <a href="{{applicationURL .App}}/aggregates/steps" {{if eq .Kind "steps"}}aria-current="page"{{end}}>Steps</a>
+  </nav>
+  <form class="aggregate-form panel" method="get" action="{{.URL}}" hx-get="{{.URL}}" hx-target="#aggregate-view" hx-swap="outerHTML" hx-push-url="true">
+    <div class="aggregate-basics">{{range .Basics}}{{template "aggregate_control" .}}{{end}}</div>
+    <details class="aggregate-advanced" {{if .AdvancedOpen}}open{{end}}>
+      <summary>Advanced query</summary>
+      {{range .AdvancedSections}}<section class="aggregate-section"><h2>{{.Label}}</h2><div class="aggregate-controls">{{range .Controls}}{{template "aggregate_control" .}}{{end}}</div></section>{{end}}
+    </details>
+    <div class="aggregate-actions"><button type="submit" class="btn">Apply</button><a href="{{.URL}}">Reset</a></div>
+  </form>
+  {{if .Error}}<div class="empty" role="alert">{{.Error}}</div>
+  {{else if .Rows}}
+  <div class="aggregate-results" aria-live="polite"><table class="data-table"><thead><tr><th>Group</th>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>
+  {{range .Rows}}<tr><td><dl class="aggregate-group">{{range .Group}}<div><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{end}}</dl></td>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}
+  </tbody></table></div>
+  {{else}}<div class="empty" role="status">No matching aggregates</div>{{end}}
 </div>
 {{end}}

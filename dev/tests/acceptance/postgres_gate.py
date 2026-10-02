@@ -848,6 +848,7 @@ def run_case(
                 str(binary),
                 "--listen",
                 f"127.0.0.1:{port}",
+                "--enable-aggregates",
                 "--key",
                 key,
             ],

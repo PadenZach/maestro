@@ -1,4 +1,5 @@
 {{define "workflow_rows"}}
+<div class="workflow-table-wrap">
 <table class="data-table">
   <thead>
     <tr>
@@ -6,7 +7,7 @@
       <th>Workflow</th>
       <th>Name</th>
       <th>Queue</th>
-      <th>Created</th>
+      <th>Created (UTC)</th>
       <th>Executor</th>
     </tr>
   </thead>
@@ -20,16 +21,18 @@
       <td class="mono"><a href="{{workflowURL $.App .WorkflowUUID}}">{{truncate 24 .WorkflowUUID}}</a></td>
       <td>{{derefOr .WorkflowName "—"}}</td>
       <td>{{derefOr .QueueName "—"}}</td>
-      <td class="mono subtle">{{derefOr .CreatedAt "—"}}</td>
+      <td class="mono subtle workflow-created" title="{{deref .CreatedAt}}">{{workflowCreatedUTC .CreatedAt}}</td>
       <td class="mono subtle">{{truncate 12 (deref .ExecutorID)}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
+</div>
 
 <div class="pager">
   <span class="subtle">{{.RangeLabel}}</span>
   <span class="pager-btns">
+    <button hx-get="{{.RefreshURL}}" hx-target="#wf-rows">Refresh</button>
     {{if .PrevURL}}<button hx-get="{{.PrevURL}}" hx-target="#wf-rows">‹ Prev</button>{{else}}<button disabled>‹ Prev</button>{{end}}
     {{if .NextURL}}<button hx-get="{{.NextURL}}" hx-target="#wf-rows">Next ›</button>{{else}}<button disabled>Next ›</button>{{end}}
   </span>
