@@ -12,7 +12,7 @@ import (
 
 // localV2Schedule maps the released SDK wire record to the pinned official
 // Schedule schema. queue_name is intentionally absent from that HTTP schema.
-func localV2Schedule(schedule protocol.ScheduleOutput) (map[string]any, error) {
+func localV2Schedule(schedule protocol.ScheduleOutput) (*Schedule, error) {
 	if !schedule.HasRequiredFields() {
 		return nil, fmt.Errorf("schedule missing required SDK fields")
 	}
@@ -21,13 +21,13 @@ func localV2Schedule(schedule protocol.ScheduleOutput) (map[string]any, error) {
 			return nil, fmt.Errorf("schedule last_fired_at must be RFC3339: %w", err)
 		}
 	}
-	return map[string]any{
-		"scheduleId": schedule.ScheduleID, "scheduleName": schedule.ScheduleName,
-		"workflowName": schedule.WorkflowName, "workflowClass": schedule.WorkflowClassName,
-		"cronExpression": schedule.Schedule, "status": schedule.Status,
-		"context": schedule.Context, "lastFiredAt": schedule.LastFiredAt,
-		"automaticBackfill": schedule.AutomaticBackfill, "cronTimezone": schedule.CronTimezone,
-		"applicationName": schedule.ApplicationName,
+	return &Schedule{
+		ScheduleID: schedule.ScheduleID, ScheduleName: schedule.ScheduleName,
+		WorkflowName: schedule.WorkflowName, WorkflowClass: schedule.WorkflowClassName,
+		CronExpression: schedule.Schedule, Status: schedule.Status,
+		Context: schedule.Context, LastFiredAt: schedule.LastFiredAt,
+		AutomaticBackfill: schedule.AutomaticBackfill, CronTimezone: schedule.CronTimezone,
+		ApplicationName: schedule.ApplicationName,
 	}, nil
 }
 
@@ -90,7 +90,7 @@ func (s *Server) localV2Schedules(w http.ResponseWriter, r *http.Request) {
 		localV2Problem(w, http.StatusBadGateway, "schedule list unavailable")
 		return
 	}
-	rows := make([]map[string]any, 0, len(response.Output))
+	rows := make([]*Schedule, 0, len(response.Output))
 	for _, schedule := range response.Output {
 		row, err := localV2Schedule(schedule)
 		if err != nil {

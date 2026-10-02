@@ -6,7 +6,6 @@ import (
 	"html"
 	"net/http"
 	"net/url"
-	"os"
 	"reflect"
 	"regexp"
 	"strings"
@@ -40,10 +39,7 @@ func scheduleConsoleWireRecord(name string) map[string]any {
 
 func pinnedScheduleFields(t *testing.T) []string {
 	t.Helper()
-	b, err := os.ReadFile("../../docs/reference/conductor-openapi-2026-09-25.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := generatedOpenAPIJSON(t)
 	var spec struct {
 		Components struct {
 			Schemas map[string]struct {
@@ -56,7 +52,7 @@ func pinnedScheduleFields(t *testing.T) []string {
 	}
 	fields := spec.Components.Schemas["Schedule"].Required
 	if len(fields) != 11 {
-		t.Fatalf("pinned Schedule required fields = %d, want 11: %v", len(fields), fields)
+		t.Fatalf("documented Schedule required fields = %d, want 11: %v", len(fields), fields)
 	}
 	return fields
 }

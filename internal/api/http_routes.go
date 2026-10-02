@@ -13,8 +13,6 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
-	"github.com/zpaden/maestro/docs/reference"
-	"github.com/zpaden/maestro/internal/apidocs"
 	"github.com/zpaden/maestro/internal/web"
 )
 
@@ -36,15 +34,11 @@ func (s *Server) httpAPI() huma.API {
 		Unmarshal: json.Unmarshal,
 	}
 	cfg.Formats = map[string]huma.Format{"application/json": format, "json": format}
-	// Local DTOs and the upstream v2 schemas belong to different contracts.
-	cfg.Components.Schemas = huma.NewMapRegistry("#/components/schemas/", func(t reflect.Type, hint string) string {
-		return "Local" + huma.DefaultSchemaNamer(t, hint)
-	})
 	cfg.Info.Description = "Maestro's local JSON reads use /api paths and preserve SDK field names. " +
 		"The [Console](/) serves HTML separately. Executors connect over WebSocket and answer server-initiated RPC requests; " +
 		"see the [executor protocol](https://github.com/zpaden/maestro/blob/main/docs/EXECUTOR_PROTOCOL.md). " +
 		"Authentication and deployment access policies belong to the external gateway."
-	cfg.Info.Description += fmt.Sprintf(" The /v2 routes serve organization %q, derived from the pinned Conductor contract. They expose 14 read operations; full Conductor compatibility is not claimed.", s.cfg.OrgName)
+	cfg.Info.Description += fmt.Sprintf(" The /v2 routes serve organization %q, documented from the Go request and response models. They expose 14 read operations; full Conductor compatibility is not claimed.", s.cfg.OrgName)
 	if s.cfg.AllowRemote {
 		cfg.Info.Description += " Remote access is enabled for deployment behind an external gateway."
 	} else {
@@ -112,45 +106,75 @@ func registerJSONRead[I, O any](api huma.API, path, id, summary string, handler 
 }
 
 func (s *Server) conductorRoutes(api huma.API) {
-	contract, err := apidocs.New(reference.ConductorOpenAPI)
-	if err != nil {
-		panic(err) // Embedded contract errors are programming errors.
-	}
-	const root = "/v2/orgs/{orgName}/apps/{appName}"
-	parameterNames := strings.NewReplacer("{orgName}", "{org}", "{appName}", "{app}",
-		"{workflowId}", "{id}", "{queueName}", "{name}", "{scheduleName}", "{name}")
-	register := func(method, suffix string, handler http.HandlerFunc) {
-		source := root + suffix
-		op, err := contract.AddOperation(api.OpenAPI(), method, source, parameterNames.Replace(source))
-		if err != nil {
-			panic(err)
+	const root = "/v2/orgs/{org}/apps/{app}"
+	for _, route := range []struct {
+		method, path, id, summary string
+		response, query, body     reflect.Type
+		handler                   http.HandlerFunc
+	}{
+		{http.MethodGet, "/schedules", "listSchedules", "List schedules", reflect.TypeFor[[]Schedule](), reflect.TypeFor[scheduleListQuery](), nil, s.localV2Schedules},
+		{http.MethodGet, "/schedules/{name}", "getSchedule", "Get a schedule", reflect.TypeFor[Schedule](), nil, nil, s.localV2GetSchedule},
+		{http.MethodGet, "/queues", "listQueues", "List queues", reflect.TypeFor[[]Queue](), nil, nil, s.localV2Queues},
+		{http.MethodGet, "/queues/{name}", "getQueue", "Get a queue", reflect.TypeFor[Queue](), nil, nil, s.localV2GetQueue},
+		{http.MethodGet, "/workflows", "listWorkflows", "List workflows", reflect.TypeFor[[]Workflow](), reflect.TypeFor[workflowListQuery](), nil, s.localV2ListWorkflows},
+		{http.MethodPost, "/workflows/search", "searchWorkflows", "Search workflows", reflect.TypeFor[[]Workflow](), nil, reflect.TypeFor[WorkflowSearchBody](), s.localV2Search},
+		{http.MethodPost, "/workflows/aggregates", "getWorkflowAggregates", "Aggregate workflows", reflect.TypeFor[[]WorkflowAggregate](), nil, reflect.TypeFor[WorkflowAggregatesBody](), s.localV2WorkflowAggregates},
+		{http.MethodPost, "/steps/aggregates", "getStepAggregates", "Aggregate steps", reflect.TypeFor[[]StepAggregate](), nil, reflect.TypeFor[StepAggregatesBody](), s.localV2StepAggregates},
+		{http.MethodGet, "/workflows/{id}", "getWorkflow", "Get a workflow", reflect.TypeFor[Workflow](), nil, nil, s.localV2Get},
+		{http.MethodGet, "/workflows/{id}/export", "exportWorkflow", "Export a workflow", reflect.TypeFor[ExportWorkflowOutputBody](), reflect.TypeFor[exportQuery](), nil, s.localV2ExportWorkflow},
+		{http.MethodGet, "/workflows/{id}/steps", "listWorkflowSteps", "List workflow steps", reflect.TypeFor[[]Step](), reflect.TypeFor[stepsQuery](), nil, s.localV2Steps},
+		{http.MethodGet, "/workflows/{id}/events", "listWorkflowEvents", "List workflow events", reflect.TypeFor[[]Event](), nil, nil, s.localV2Events},
+		{http.MethodGet, "/workflows/{id}/notifications", "listWorkflowNotifications", "List workflow notifications", reflect.TypeFor[[]Notification](), nil, nil, s.localV2Notifications},
+		{http.MethodGet, "/workflows/{id}/streams", "listWorkflowStreams", "List workflow streams", reflect.TypeFor[[]StreamEntry](), nil, nil, s.localV2Streams},
+	} {
+		registry := api.OpenAPI().Components.Schemas
+		response := registry.Schema(route.response, true, "")
+		if route.response.Kind() == reflect.Slice {
+			response.Nullable = false // Successful collection reads always return an array.
 		}
+		op := &huma.Operation{
+			Method: route.method, Path: root + route.path, OperationID: route.id,
+			Summary: route.summary, Tags: []string{"Conductor API"},
+			Responses: map[string]*huma.Response{
+				"200": {Description: "OK", Content: map[string]*huma.MediaType{"application/json": {Schema: response}}},
+			},
+		}
+		for _, status := range []int{400, 403, 404, 502, 503} {
+			op.Responses[strconv.Itoa(status)] = &huma.Response{
+				Description: http.StatusText(status),
+				Content:     map[string]*huma.MediaType{"application/problem+json": {Schema: registry.Schema(reflect.TypeFor[Problem](), true, "")}},
+			}
+		}
+		for _, part := range strings.Split(op.Path, "/") {
+			if strings.HasPrefix(part, "{") {
+				op.Parameters = append(op.Parameters, &huma.Param{Name: strings.Trim(part, "{}"), In: "path", Required: true, Schema: &huma.Schema{Type: "string"}})
+			}
+		}
+		if route.query != nil {
+			for _, field := range reflect.VisibleFields(route.query) {
+				name := strings.Split(field.Tag.Get("json"), ",")[0]
+				schema := huma.SchemaFromField(registry, field, "")
+				schema.Nullable = false
+				op.Parameters = append(op.Parameters, &huma.Param{Name: name, In: "query", Schema: schema})
+			}
+		}
+		if route.body != nil {
+			op.RequestBody = &huma.RequestBody{Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(route.body, true, "")}}}
+		}
+		api.OpenAPI().AddOperation(op)
 		api.Adapter().Handle(op, func(ctx huma.Context) {
 			r, w := humago.Unwrap(ctx)
-			handler(w, r)
+			route.handler(w, r)
 		})
 	}
-	register(http.MethodGet, "/schedules", s.localV2Schedules)
-	register(http.MethodGet, "/schedules/{scheduleName}", s.localV2GetSchedule)
-	register(http.MethodGet, "/queues", s.localV2Queues)
-	register(http.MethodGet, "/queues/{queueName}", s.localV2GetQueue)
-	register(http.MethodGet, "/workflows", s.localV2ListWorkflows)
-	register(http.MethodPost, "/workflows/search", s.localV2Search)
-	register(http.MethodPost, "/workflows/aggregates", s.localV2WorkflowAggregates)
-	register(http.MethodPost, "/steps/aggregates", s.localV2StepAggregates)
-	register(http.MethodGet, "/workflows/{workflowId}", s.localV2Get)
-	register(http.MethodGet, "/workflows/{workflowId}/export", s.localV2ExportWorkflow)
-	register(http.MethodGet, "/workflows/{workflowId}/steps", s.localV2Steps)
-	register(http.MethodGet, "/workflows/{workflowId}/events", s.localV2Events)
-	register(http.MethodGet, "/workflows/{workflowId}/notifications", s.localV2Notifications)
-	register(http.MethodGet, "/workflows/{workflowId}/streams", s.localV2Streams)
-	// Owner-approved SDK compatibility exceptions. Keep the pinned snapshot
-	// immutable and document the actual response without fabricating values.
-	workflow := api.OpenAPI().Components.Schemas.Map()["Workflow"].Extensions
-	properties := workflow["properties"].(map[string]any)
-	for name, kind := range map[string]string{"priority": "integer", "updatedAt": "string"} {
-		field := properties[name].(map[string]any)
-		field["type"] = []any{kind, "null"}
-		field["description"] = "Preserves SDK null values; nullable in Maestro, unlike the pinned Conductor snapshot."
+}
+
+func requestFields[T any]() map[string]struct{} {
+	fields := map[string]struct{}{}
+	for _, field := range reflect.VisibleFields(reflect.TypeFor[T]()) {
+		if name := strings.Split(field.Tag.Get("json"), ",")[0]; name != "" && name != "-" {
+			fields[name] = struct{}{}
+		}
 	}
+	return fields
 }

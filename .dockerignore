@@ -5,10 +5,6 @@
 !cmd/**
 !internal/
 !internal/**
-!docs/
-!docs/reference/
-!docs/reference/embed.go
-!docs/reference/conductor-openapi-2026-09-25.json
 !Dockerfile
 **/*_test.go
 internal/protocol/testdata/

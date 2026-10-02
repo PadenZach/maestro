@@ -62,15 +62,5 @@
   "docs": {
     "repository": "https://github.com/dbos-inc/dbos-docs",
     "commit": "edaf6368b2c08eb356f0bb95e26d5104544d93f3"
-  },
-  "http_openapi": {
-    "url": "https://cloud.dbos.dev/conductor/v2/openapi.json",
-    "snapshot": "docs/reference/conductor-openapi-2026-09-25.json",
-    "sha256": "a75fbdaac75a746c239382c8dffd1eb10b300912dfec8d6a60d86ac56c49b053",
-    "openapi_version": "3.1.0",
-    "api_version": "2.0.0",
-    "path_count": 53,
-    "operation_count": 65,
-    "deployment_snapshot_not_release_pin": true
   }
 }

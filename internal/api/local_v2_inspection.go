@@ -14,23 +14,8 @@ import (
 	"github.com/zpaden/maestro/internal/protocol"
 )
 
-var localV2WorkflowAggregateFields = map[string]struct{}{
-	"groupByStatus": {}, "groupByWorkflowName": {}, "groupByQueueName": {},
-	"groupByExecutorId": {}, "groupByAppVersion": {}, "groupByApplicationName": {},
-	"selectCount": {}, "selectMinCreatedAt": {}, "selectMaxQueueWaitMs": {},
-	"selectMaxTotalLatencyMs": {}, "timeBucketSizeMs": {}, "status": {},
-	"startTime": {}, "endTime": {}, "completedAfter": {}, "completedBefore": {},
-	"dequeuedAfter": {}, "dequeuedBefore": {}, "workflowName": {}, "appVersion": {},
-	"executorId": {}, "queueName": {}, "workflowIdPrefix": {}, "workflowIds": {},
-	"forkedFrom": {}, "parentWorkflowId": {}, "user": {}, "scheduleName": {},
-	"wasForkedFrom": {}, "hasParent": {}, "attributes": {},
-}
-
-var localV2StepAggregateFields = map[string]struct{}{
-	"groupByFunctionName": {}, "groupByStatus": {}, "selectCount": {},
-	"selectMaxDurationMs": {}, "timeBucketSizeMs": {}, "status": {},
-	"stepName": {}, "workflowIdPrefix": {}, "completedAfter": {}, "completedBefore": {},
-}
+var localV2WorkflowAggregateFields = requestFields[WorkflowAggregatesBody]()
+var localV2StepAggregateFields = requestFields[StepAggregatesBody]()
 
 func localV2InspectionApp(app string) error {
 	if !utf8.ValidString(app) || utf8.RuneCountInString(app) < 3 || utf8.RuneCountInString(app) > 256 || !localV2AppName.MatchString(app) {
@@ -361,7 +346,7 @@ func localV2InspectionTime(milliseconds int64, record string) (string, error) {
 	return time.Unix(seconds, remainder*int64(time.Millisecond)).UTC().Format("2006-01-02T15:04:05.000Z07:00"), nil
 }
 
-func localV2WorkflowAggregateRecord(raw json.RawMessage) (map[string]any, error) {
+func localV2WorkflowAggregateRecord(raw json.RawMessage) (aggregateResult, error) {
 	const record = "workflow aggregate"
 	fields, err := localV2RawObject(raw, record)
 	if err != nil {
@@ -394,27 +379,18 @@ func localV2WorkflowAggregateRecord(raw json.RawMessage) (map[string]any, error)
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"group": group}
-	if count != nil {
-		out["count"] = *count
-	}
+	out := &WorkflowAggregate{Group: group, Count: count, MaxQueueWaitMS: maxQueueWaitMS, MaxTotalLatencyMS: maxTotalLatencyMS}
 	if minCreatedAt != nil {
 		converted, err := localV2InspectionTime(*minCreatedAt, record)
 		if err != nil {
 			return nil, err
 		}
-		out["minCreatedAt"] = converted
-	}
-	if maxQueueWaitMS != nil {
-		out["maxQueueWaitMs"] = *maxQueueWaitMS
-	}
-	if maxTotalLatencyMS != nil {
-		out["maxTotalLatencyMs"] = *maxTotalLatencyMS
+		out.MinCreatedAt = &converted
 	}
 	return out, nil
 }
 
-func localV2StepAggregateRecord(raw json.RawMessage) (map[string]any, error) {
+func localV2StepAggregateRecord(raw json.RawMessage) (aggregateResult, error) {
 	const record = "step aggregate"
 	fields, err := localV2RawObject(raw, record)
 	if err != nil {
@@ -439,13 +415,7 @@ func localV2StepAggregateRecord(raw json.RawMessage) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]any{"group": group}
-	if count != nil {
-		out["count"] = *count
-	}
-	if maxDurationMS != nil {
-		out["maxDurationMs"] = *maxDurationMS
-	}
+	out := &StepAggregate{Group: group, Count: count, MaxDurationMS: maxDurationMS}
 	return out, nil
 }
 
@@ -613,5 +583,5 @@ func (s *Server) localV2ExportWorkflow(w http.ResponseWriter, r *http.Request) {
 		localV2Failure(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"serializedWorkflow": serialized})
+	writeJSON(w, http.StatusOK, ExportWorkflowOutputBody{SerializedWorkflow: serialized})
 }

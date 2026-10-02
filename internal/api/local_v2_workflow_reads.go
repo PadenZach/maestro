@@ -14,17 +14,7 @@ import (
 	"github.com/zpaden/maestro/internal/protocol"
 )
 
-// These are exactly the writable properties of the pinned WorkflowSearchBody.
-// The read-only $schema property and any future fields fail closed.
-var localV2WorkflowSearchFields = map[string]struct{}{
-	"appVersion": {}, "attributes": {}, "completedAfter": {}, "completedBefore": {},
-	"dequeuedAfter": {}, "dequeuedBefore": {}, "endTime": {}, "executorId": {},
-	"forkedFrom": {}, "hasParent": {}, "limit": {}, "loadInput": {},
-	"loadOutput": {}, "offset": {}, "parentWorkflowId": {}, "queueName": {},
-	"queuesOnly": {}, "scheduleName": {}, "sortDesc": {}, "startTime": {},
-	"status": {}, "user": {}, "wasForkedFrom": {}, "workflowIdPrefix": {},
-	"workflowIds": {}, "workflowName": {},
-}
+var localV2WorkflowSearchFields = requestFields[WorkflowSearchBody]()
 
 func localV2WorkflowQueryValues(rawQuery string) (url.Values, error) {
 	query, err := url.ParseQuery(rawQuery)
@@ -306,7 +296,7 @@ func (s *Server) localV2WriteWorkflows(w http.ResponseWriter, r *http.Request, b
 		localV2Failure(w, errors.New("invalid executor list_workflows output: null"))
 		return
 	}
-	out := make([]map[string]any, 0, len(rows))
+	out := make([]*Workflow, 0, len(rows))
 	for _, row := range rows {
 		value, err := localV2Workflow(row)
 		if err != nil {

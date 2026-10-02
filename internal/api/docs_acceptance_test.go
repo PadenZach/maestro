@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -219,17 +218,9 @@ func TestDocsAcceptanceLocalSchemasPreserveSDKResponses(t *testing.T) {
 	}
 }
 
-func TestDocsAcceptancePinnedSchemasAndServerIsolation(t *testing.T) {
+func TestDocsAcceptanceGeneratedSchemasAndServerIsolation(t *testing.T) {
 	enabled, _ := docsAcceptanceServer(t, "local")
 	first := docsAcceptanceSpec(t, enabled)
-	data, err := os.ReadFile("../../docs/reference/conductor-openapi-2026-09-25.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pinned map[string]any
-	if err := json.Unmarshal(data, &pinned); err != nil {
-		t.Fatal(err)
-	}
 	wantIDs := map[string]bool{
 		"listQueues": true, "getQueue": true, "listSchedules": true, "getSchedule": true,
 		"listWorkflows": true, "searchWorkflows": true, "getWorkflow": true,
@@ -254,20 +245,12 @@ func TestDocsAcceptancePinnedSchemasAndServerIsolation(t *testing.T) {
 		}
 	}
 	if !reflect.DeepEqual(gotIDs, wantIDs) {
-		t.Fatalf("documented v2 operation IDs %v, want pinned read subset %v", gotIDs, wantIDs)
+		t.Fatalf("documented v2 operation IDs %v, want supported reads %v", gotIDs, wantIDs)
 	}
 	schemas := first["components"].(map[string]any)["schemas"].(map[string]any)
-	pinnedSchemas := pinned["components"].(map[string]any)["schemas"].(map[string]any)
-	// The only approved response-schema exceptions preserve released SDK nulls.
-	workflowProperties := pinnedSchemas["Workflow"].(map[string]any)["properties"].(map[string]any)
-	for name, kind := range map[string]string{"priority": "integer", "updatedAt": "string"} {
-		field := workflowProperties[name].(map[string]any)
-		field["type"] = []any{kind, "null"}
-		field["description"] = "Preserves SDK null values; nullable in Maestro, unlike the pinned Conductor snapshot."
-	}
 	for _, name := range []string{"Workflow", "Step", "Queue", "Schedule", "Event", "Notification", "StreamEntry", "WorkflowSearchBody", "WorkflowAggregatesBody", "StepAggregatesBody", "WorkflowAggregate", "StepAggregate", "ExportWorkflowOutputBody"} {
-		if !reflect.DeepEqual(schemas[name], pinnedSchemas[name]) {
-			t.Errorf("documented %s schema differs from pinned HTTP authority: got %v; want %v", name, schemas[name], pinnedSchemas[name])
+		if schema, ok := schemas[name].(map[string]any); !ok || len(schema["properties"].(map[string]any)) == 0 {
+			t.Errorf("missing generated model schema %s", name)
 		}
 	}
 	other, _ := docsAcceptanceServer(t, "other")

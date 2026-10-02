@@ -60,14 +60,18 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Install image conversion tools
-        run: sudo apt-get update && sudo apt-get install -y skopeo jq
       - run: mise run build
+      - run: mise run image:scan
       - run: mise run image:test
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
       - name: Publish image to GHCR
         if: github.event_name != 'pull_request'
         env:
-          GHCR_IMAGE: ${{ vars.GHCR_IMAGE }}
-          GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          IMAGE_REPOSITORY: ${{ vars.GHCR_IMAGE || format('ghcr.io/{0}', github.repository) }}
         run: mise run image:publish

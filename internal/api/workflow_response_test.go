@@ -45,12 +45,6 @@ func TestHTTPWorkflowPreservesSDKNulls(t *testing.T) {
 				if !present || value != nil {
 					t.Errorf("SDK null replaced or omitted: %s", raw)
 				}
-				// All unchanged fields must still satisfy the independent pinned schema.
-				if field == "Priority" {
-					row[key] = float64(0)
-				} else {
-					row[key] = "2024-07-03T09:46:40.456Z"
-				}
 				assertLocalV2Schema(t, "Workflow", row)
 			}
 		})

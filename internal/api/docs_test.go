@@ -60,3 +60,44 @@ func TestAPIDocumentationRoutes(t *testing.T) {
 		t.Fatal("docs must initialize Swagger UI with this server's OpenAPI document")
 	}
 }
+
+func TestConductorDocsDescribeRuntimeFailures(t *testing.T) {
+	ts, _ := docsAcceptanceServer(t, "local")
+	spec := docsAcceptanceSpec(t, ts)
+	for path, item := range spec["paths"].(map[string]any) {
+		if !strings.HasPrefix(path, "/v2/") {
+			continue
+		}
+		for method, value := range item.(map[string]any) {
+			op := value.(map[string]any)
+			responses := op["responses"].(map[string]any)
+			for _, status := range []string{"400", "403", "404", "502", "503"} {
+				response, ok := responses[status].(map[string]any)
+				if !ok {
+					t.Errorf("%s %s omits runtime status %s", method, path, status)
+					continue
+				}
+				content, _ := response["content"].(map[string]any)
+				if content["application/problem+json"] == nil {
+					t.Errorf("%s %s status %s omits the problem response", method, path, status)
+				}
+			}
+			if responses["401"] != nil {
+				t.Errorf("%s %s documents authentication the server does not implement", method, path)
+			}
+		}
+	}
+}
+
+// The live handler is the only source of the OpenAPI document in these tests.
+func generatedOpenAPIJSON(t *testing.T) []byte {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := api.New(config.Config{}, hub.New(log, time.Second), log)
+	response := httptest.NewRecorder()
+	s.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("OpenAPI status = %d", response.Code)
+	}
+	return response.Body.Bytes()
+}

@@ -142,11 +142,9 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := aggregatesData{App: app, Kind: kind, Title: "Workflow aggregates", Sections: aggregateSections(kind), Columns: []string{"Count", "Earliest created", "Max queue wait (ms)", "Max total latency (ms)"}}
-	keys := []string{"count", "minCreatedAt", "maxQueueWaitMs", "maxTotalLatencyMs"}
 	if kind == "steps" {
 		data.Title = "Step aggregates"
 		data.Columns = []string{"Count", "Max duration (ms)"}
-		keys = []string{"count", "maxDurationMs"}
 	}
 	fields, err := parseAggregateControls(r, data.Sections)
 	var request protocol.Request
@@ -167,7 +165,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status = http.StatusBadRequest
 	} else {
-		var records []map[string]any
+		var records []aggregateResult
 		records, err = s.readAggregates(r.Context(), app, request, mapper)
 		if err != nil {
 			status = http.StatusBadGateway
@@ -176,20 +174,7 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			for _, record := range records {
-				var group strings.Builder
-				encoder := json.NewEncoder(&group)
-				encoder.SetEscapeHTML(false) // html/template escapes the visible text.
-				_ = encoder.Encode(record["group"])
-				row := aggregateRow{Group: strings.TrimSuffix(group.String(), "\n")}
-				for _, key := range keys {
-					value, selected := record[key]
-					cell := "Not selected"
-					if selected {
-						cell = fmt.Sprint(value)
-					}
-					row.Cells = append(row.Cells, cell)
-				}
-				data.Rows = append(data.Rows, row)
+				data.Rows = append(data.Rows, record.consoleRow())
 			}
 		}
 	}
@@ -203,4 +188,27 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.web.Page(w, "aggregates", page{Title: app + " · " + data.Title, AppsAvailable: s.appsAvailable(), Status: s.statusForPage(status >= 500), Crumbs: []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app)}, {Label: data.Title}}, Data: data})
+}
+
+func aggregateCell[T any](value *T) string {
+	if value == nil {
+		return "Not selected"
+	}
+	return fmt.Sprint(*value)
+}
+
+func aggregateConsoleRow(group map[string]*string, cells ...string) aggregateRow {
+	var text strings.Builder
+	encoder := json.NewEncoder(&text)
+	encoder.SetEscapeHTML(false) // html/template escapes the visible text.
+	_ = encoder.Encode(group)
+	return aggregateRow{Group: strings.TrimSuffix(text.String(), "\n"), Cells: cells}
+}
+
+func (a *WorkflowAggregate) consoleRow() aggregateRow {
+	return aggregateConsoleRow(a.Group, aggregateCell(a.Count), aggregateCell(a.MinCreatedAt), aggregateCell(a.MaxQueueWaitMS), aggregateCell(a.MaxTotalLatencyMS))
+}
+
+func (a *StepAggregate) consoleRow() aggregateRow {
+	return aggregateConsoleRow(a.Group, aggregateCell(a.Count), aggregateCell(a.MaxDurationMS))
 }

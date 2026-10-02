@@ -12,14 +12,14 @@ run = 'go run ./cmd/maestro --listen "127.0.0.1:$MAESTRO_PORT"'
 
 [tasks.fmt]
 description = "Format Go source"
-run = "gofmt -w cmd internal docs/reference dev/tests/container"
+run = "gofmt -w cmd internal dev/tests/container"
 
 [tasks.check]
 description = "Check formatting, build, vet, Staticcheck and run Go tests"
 run = [
   '''
 set -eu
-files="$(gofmt -l cmd internal docs/reference dev/tests/container)"
+files="$(gofmt -l cmd internal dev/tests/container)"
 if [ -n "$files" ]; then
   printf 'Run mise run fmt for:\n%s\n' "$files"
   exit 1
@@ -32,80 +32,43 @@ fi
 ]
 
 [tasks.build]
-description = "Build both Linux platforms with CycloneDX SBOMs and provenance, scan and load locally"
-# Requires Docker Buildx, skopeo and jq (brew install skopeo jq / apt-get install skopeo jq).
+description = "Build and load the native image into Docker"
 shell = "bash -euo pipefail -c"
 run = '''
-command -v skopeo >/dev/null
-command -v jq >/dev/null
-revision="$(git rev-parse HEAD)"
-version="${VERSION:-$(git describe --tags --always --dirty)}"
-[[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo 'Invalid VERSION' >&2; exit 1; }
-builder="${BUILDX_BUILDER:-maestro-build}"
-if [[ -z "${BUILDX_BUILDER:-}" ]] && ! docker buildx inspect "$builder" >/dev/null 2>&1; then
-  docker buildx create --name "$builder" --driver docker-container
-fi
-mkdir -p dist
-rm -rf dist/oci
-rm -f dist/maestro-amd64.tar dist/maestro-arm64.tar
-docker buildx build --builder "$builder" --platform linux/amd64,linux/arm64 \
-  --build-arg "VERSION=$version" --build-arg "REVISION=$revision" \
-  --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --build-arg "SOURCE=${IMAGE_SOURCE:-https://github.com/zpaden/maestro}" \
-  --provenance=mode=min --metadata-file dist/image-metadata.json \
-  --output type=oci,dest=dist/oci,tar=false .
-digest="$(jq -er '."containerimage.digest"' dist/image-metadata.json)"
-oras tag --oci-layout "dist/oci@$digest" maestro
-for arch in amd64 arm64; do
-  skopeo --override-os linux --override-arch "$arch" copy \
-    oci:dist/oci:maestro "docker-archive:dist/maestro-$arch.tar:maestro:build-$arch"
-  trivy image --input "dist/maestro-$arch.tar" --format cyclonedx \
-    --output "dist/sbom-$arch.cdx.json"
-  trivy sbom --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 \
-    "dist/sbom-$arch.cdx.json"
-  oras attach --oci-layout --artifact-type application/vnd.cyclonedx+json \
-    "dist/oci@$digest" "dist/sbom-$arch.cdx.json:application/vnd.cyclonedx+json"
-done
-touch dist/oci/.scanned
-mise run image:load
+docker buildx build --load --tag "${IMAGE:-maestro:local}" \
+  --build-arg "VERSION=${VERSION:-$(git describe --tags --always --dirty)}" \
+  --build-arg "REVISION=$(git rev-parse HEAD)" \
+  --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
 '''
-tools = { trivy = "0.74.0", oras = "1.3.4" }
+
+[tasks."image:scan"]
+description = "Scan IMAGE (default maestro:local) for HIGH/CRITICAL vulnerabilities"
+run = 'trivy image --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 "${IMAGE:-maestro:local}"'
+tools = { trivy = "0.74.0" }
 
 [tasks."image:publish"]
-description = "Publish the scanned image, CycloneDX SBOMs and in-toto provenance to GHCR"
+description = "Push a candidate to IMAGE_REPOSITORY, scan both platforms, then promote it"
 shell = "bash -euo pipefail -c"
 run = '''
-test -f dist/oci/.scanned || { echo 'Run mise run build first' >&2; exit 1; }
-repository="$(printf '%s' "${GHCR_IMAGE:-ghcr.io/${GITHUB_REPOSITORY:-}}" | tr '[:upper:]' '[:lower:]')"
-[[ "$repository" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || {
-  echo 'Set GHCR_IMAGE to ghcr.io/OWNER/IMAGE' >&2; exit 1;
-}
-tag="${IMAGE_TAG:-sha-$(git rev-parse HEAD)}"
-[[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo 'Invalid IMAGE_TAG' >&2; exit 1; }
-copy=(oras copy --recursive --from-oci-layout)
-if [[ -n "${GHCR_TOKEN:-}" ]]; then
-  username="${GHCR_USERNAME:-${GITHUB_ACTOR:-}}"
-  : "${username:?Set GHCR_USERNAME to the registry token owner}"
-  scratch="$(mktemp -d)"
-  trap 'rm -rf "$scratch"' EXIT
-  copy+=(--registry-config "$scratch/config.json")
-  printf '%s' "$GHCR_TOKEN" | oras login --registry-config "$scratch/config.json" \
-    ghcr.io --username "$username" --password-stdin
-fi
-"${copy[@]}" dist/oci:maestro "$repository:$tag"
+repository="$(printf '%s' "${IMAGE_REPOSITORY:?Set IMAGE_REPOSITORY to the registry image name}" | tr '[:upper:]' '[:lower:]')"
+revision="$(git rev-parse HEAD)"
+candidate="candidate-$revision-${GITHUB_RUN_ID:-$(date +%s)}-${GITHUB_RUN_ATTEMPT:-1}"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+docker buildx build --push --platform linux/amd64,linux/arm64 \
+  --tag "$repository:$candidate" --sbom=true --provenance=mode=min \
+  --build-arg "VERSION=${VERSION:-$(git describe --tags --always --dirty)}" \
+  --build-arg "REVISION=$revision" \
+  --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --metadata-file "$scratch/metadata.json" .
+digest="$(jq -er '."containerimage.digest"' "$scratch/metadata.json")"
+for arch in amd64 arm64; do
+  IMAGE="$repository@$digest" TRIVY_PLATFORM="linux/$arch" TRIVY_IMAGE_SRC=remote \
+    mise run image:scan
+done
+docker buildx imagetools create --tag "$repository:${IMAGE_TAG:-sha-$revision}" "$repository@$digest"
 '''
-tools = { oras = "1.3.4" }
-
-[tasks."image:load"]
-description = "Load the scanned image into Docker (IMAGE_ARCH, IMAGE_LOCAL_TAG override defaults)"
-shell = "bash -euo pipefail -c"
-run = '''
-test -f dist/oci/.scanned || { echo 'Run mise run build first' >&2; exit 1; }
-arch="${IMAGE_ARCH:-$(docker version --format json | jq -er '.Server.Arch')}"
-case "$arch" in amd64|arm64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; esac
-docker image load --input "dist/maestro-$arch.tar"
-docker image tag "maestro:build-$arch" "${IMAGE_LOCAL_TAG:-maestro:local}"
-'''
+tools = { jq = "1.8.1" }
 
 [tasks."image:test"]
 description = "Test the container's HTTP endpoints, shutdown and security settings"

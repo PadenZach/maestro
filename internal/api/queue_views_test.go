@@ -18,7 +18,7 @@ import (
 )
 
 // queueConsoleWireRecord uses the reviewed Python 3.1.0 QueueOutput wire keys.
-// The Console field inventory is checked separately against the pinned OpenAPI.
+// The Console field inventory is checked separately against the generated OpenAPI.
 func queueConsoleWireRecord(name string) map[string]any {
 	return map[string]any{
 		"name":                            name,
@@ -39,10 +39,7 @@ func queueConsoleWireRecord(name string) map[string]any {
 
 func pinnedQueueFields(t *testing.T) []string {
 	t.Helper()
-	b, err := os.ReadFile("../../docs/reference/conductor-openapi-2026-09-25.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	b := generatedOpenAPIJSON(t)
 	var spec struct {
 		Components struct {
 			Schemas map[string]struct {
@@ -55,7 +52,7 @@ func pinnedQueueFields(t *testing.T) []string {
 	}
 	fields := spec.Components.Schemas["Queue"].Required
 	if len(fields) != 13 {
-		t.Fatalf("pinned Queue required fields = %d, want 13: %v", len(fields), fields)
+		t.Fatalf("documented Queue required fields = %d, want 13: %v", len(fields), fields)
 	}
 	return fields
 }

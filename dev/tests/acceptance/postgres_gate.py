@@ -303,15 +303,10 @@ WORKFLOW_HTTP_NUMBER_TO_WIRE = {
 }
 
 
-def _pinned_workflow_schema():
-    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
-    return json.loads(snapshot.read_text())["components"]["schemas"]["Workflow"]
-
-
 def _workflow_time_epoch_ms(value):
     if value is None:
         return None
-    assert _is_rfc3339(value), "Official Workflow timestamp violates pinned schema"
+    assert _is_rfc3339(value), "Official Workflow timestamp violates generated schema"
     parsed = datetime.datetime.fromisoformat(
         value[:-1] + "+00:00" if value.endswith("Z") else value
     )
@@ -326,36 +321,34 @@ def _workflow_time_epoch_ms(value):
     )
 
 
-def validate_official_workflow(workflow, expected_sdk_digest):
-    """Validate pinned fields, the two approved null exceptions, and SDK values."""
-    schema = _pinned_workflow_schema()
+def validate_official_workflow(workflow, expected_sdk_digest, *, schemas):
+    """Validate generated response fields and SDK values."""
+    schema = schemas["Workflow"]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(workflow, dict), "Official Workflow response must be an object"
     assert required <= set(workflow) <= set(properties), (
-        "Official Workflow fields differ from pinned schema"
+        "Official Workflow fields differ from generated schema"
     )
     for field, value in workflow.items():
         allowed = properties[field]["type"]
         if isinstance(allowed, str):
             allowed = [allowed]
-        if field in ("priority", "updatedAt"):
-            allowed = [*allowed, "null"]
         assert _matches_json_type(value, allowed), (
-            f"Official Workflow.{field} violates pinned schema"
+            f"Official Workflow.{field} violates generated schema"
         )
         field_format = properties[field].get("format")
         if field_format == "date-time" and value is not None:
             assert _is_rfc3339(value), (
-                f"Official Workflow.{field} violates pinned schema"
+                f"Official Workflow.{field} violates generated schema"
             )
         if field_format == "int32" and value is not None:
             assert -(2**31) <= value < 2**31, (
-                f"Official Workflow.{field} violates pinned schema"
+                f"Official Workflow.{field} violates generated schema"
             )
         if field_format == "int64" and value is not None:
             assert -(2**63) <= value < 2**63, (
-                f"Official Workflow.{field} violates pinned schema"
+                f"Official Workflow.{field} violates generated schema"
             )
 
     wire = {
@@ -390,11 +383,6 @@ QUEUE_HTTP_TO_WIRE = {
 }
 
 
-def _pinned_queue_schema():
-    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
-    return json.loads(snapshot.read_text())["components"]["schemas"]["Queue"]
-
-
 def _matches_json_type(value, allowed):
     if value is None:
         return "null" in allowed
@@ -409,33 +397,33 @@ def _matches_json_type(value, allowed):
     return False
 
 
-def validate_official_queue(queue, expected_sdk_digest):
-    """Validate one official Queue response against pinned OpenAPI and SDK wire."""
-    schema = _pinned_queue_schema()
+def validate_official_queue(queue, expected_sdk_digest, *, schemas):
+    """Validate one official Queue response against generated OpenAPI and SDK wire."""
+    schema = schemas["Queue"]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(queue, dict), "Official Queue response must be an object"
     assert required <= set(queue) <= set(properties), (
-        "Official Queue fields differ from pinned schema"
+        "Official Queue fields differ from generated schema"
     )
     for field, value in queue.items():
         allowed = properties[field]["type"]
         if isinstance(allowed, str):
             allowed = [allowed]
         assert _matches_json_type(value, allowed), (
-            f"Official Queue.{field} violates pinned schema"
+            f"Official Queue.{field} violates generated schema"
         )
         field_format = properties[field].get("format")
         if field_format == "int32" and value is not None:
             assert -(2**31) <= value < 2**31, (
-                f"Official Queue.{field} violates pinned schema"
+                f"Official Queue.{field} violates generated schema"
             )
         if field_format == "double" and value is not None:
             assert isinstance(value, (int, float)) and not isinstance(value, bool), (
-                f"Official Queue.{field} violates pinned schema"
+                f"Official Queue.{field} violates generated schema"
             )
             assert math.isfinite(value), (
-                f"Official Queue.{field} violates pinned schema"
+                f"Official Queue.{field} violates generated schema"
             )
 
     wire = {
@@ -466,11 +454,6 @@ SCHEDULE_HTTP_TO_WIRE = {
 }
 
 
-def _pinned_schedule_schema():
-    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
-    return json.loads(snapshot.read_text())["components"]["schemas"]["Schedule"]
-
-
 def _is_rfc3339(value):
     if (
         not isinstance(value, str)
@@ -491,25 +474,25 @@ def _is_rfc3339(value):
     return parsed.tzinfo is not None
 
 
-def validate_official_schedule(schedule, expected_sdk_digest):
-    """Validate one official Schedule response against pinned OpenAPI and SDK wire."""
-    schema = _pinned_schedule_schema()
+def validate_official_schedule(schedule, expected_sdk_digest, *, schemas):
+    """Validate one official Schedule response against generated OpenAPI and SDK wire."""
+    schema = schemas["Schedule"]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(schedule, dict), "Official Schedule response must be an object"
     assert required <= set(schedule) <= set(properties), (
-        "Official Schedule fields differ from pinned schema"
+        "Official Schedule fields differ from generated schema"
     )
     for field, value in schedule.items():
         allowed = properties[field]["type"]
         if isinstance(allowed, str):
             allowed = [allowed]
         assert _matches_json_type(value, allowed), (
-            f"Official Schedule.{field} violates pinned schema"
+            f"Official Schedule.{field} violates generated schema"
         )
         if properties[field].get("format") == "date-time" and value is not None:
             assert _is_rfc3339(value), (
-                f"Official Schedule.{field} violates pinned schema"
+                f"Official Schedule.{field} violates generated schema"
             )
 
     wire = {
@@ -525,20 +508,15 @@ def validate_official_schedule(schedule, expected_sdk_digest):
     )
 
 
-def _pinned_related_schema(schema_name):
-    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
-    return json.loads(snapshot.read_text())["components"]["schemas"][schema_name]
-
-
-def _validate_official_related(record, schema_name):
-    schema = _pinned_related_schema(schema_name)
+def _validate_official_related(record, schema_name, *, schemas):
+    schema = schemas[schema_name]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(record, dict), (
         f"Official {schema_name} response must be an object"
     )
     assert required <= set(record) <= set(properties), (
-        f"Official {schema_name} fields differ from pinned schema"
+        f"Official {schema_name} fields differ from generated schema"
     )
     for field, value in record.items():
         property_schema = properties[field]
@@ -552,10 +530,10 @@ def _validate_official_related(record, schema_name):
                 valid = all(_matches_json_type(item, [item_type]) for item in value)
         else:
             valid = _matches_json_type(value, allowed)
-        assert valid, f"Official {schema_name}.{field} violates pinned schema"
+        assert valid, f"Official {schema_name}.{field} violates generated schema"
         if property_schema.get("format") == "date-time" and value is not None:
             assert _is_rfc3339(value), (
-                f"Official {schema_name}.{field} violates pinned schema"
+                f"Official {schema_name}.{field} violates generated schema"
             )
 
 
@@ -566,8 +544,8 @@ def _sdk_wire_digest(wire):
     return hashlib.sha256(encoded).hexdigest()
 
 
-def validate_official_event(event, expected_sdk_digest):
-    _validate_official_related(event, "Event")
+def validate_official_event(event, expected_sdk_digest, *, schemas):
+    _validate_official_related(event, "Event", schemas=schemas)
     assert _sdk_wire_digest(event) == expected_sdk_digest, (
         "Official event field values differ from SDK EventOutput"
     )
@@ -588,8 +566,8 @@ def _notification_created_at_epoch_ms(created_at):
     ) * 1000 + delta.microseconds // 1000
 
 
-def validate_official_notification(notification, expected_sdk_digest):
-    _validate_official_related(notification, "Notification")
+def validate_official_notification(notification, expected_sdk_digest, *, schemas):
+    _validate_official_related(notification, "Notification", schemas=schemas)
     wire = {
         "topic": notification["topic"],
         "message": notification["message"],
@@ -603,36 +581,31 @@ def validate_official_notification(notification, expected_sdk_digest):
     )
 
 
-def validate_official_stream(stream, expected_sdk_digest):
-    _validate_official_related(stream, "StreamEntry")
+def validate_official_stream(stream, expected_sdk_digest, *, schemas):
+    _validate_official_related(stream, "StreamEntry", schemas=schemas)
     assert _sdk_wire_digest(stream) == expected_sdk_digest, (
         "Official stream field values differ from SDK StreamEntryOutput"
     )
 
 
-def _pinned_inspection_schema(schema_name):
-    snapshot = ROOT / "docs/reference/conductor-openapi-2026-09-25.json"
-    return json.loads(snapshot.read_text())["components"]["schemas"][schema_name]
-
-
-def _validate_official_aggregate(record, schema_name):
-    schema = _pinned_inspection_schema(schema_name)
+def _validate_official_aggregate(record, schema_name, *, schemas):
+    schema = schemas[schema_name]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(record, dict), (
         f"Official {schema_name} response must be an object"
     )
     assert required <= set(record) <= set(properties), (
-        f"Official {schema_name} fields differ from pinned schema"
+        f"Official {schema_name} fields differ from generated schema"
     )
     group = record.get("group")
     assert isinstance(group, dict), (
-        f"Official {schema_name}.group violates pinned schema"
+        f"Official {schema_name}.group violates generated schema"
     )
     assert all(
         isinstance(key, str) and (value is None or isinstance(value, str))
         for key, value in group.items()
-    ), f"Official {schema_name}.group violates pinned schema"
+    ), f"Official {schema_name}.group violates generated schema"
     for field, value in record.items():
         if field == "group":
             continue
@@ -641,11 +614,11 @@ def _validate_official_aggregate(record, schema_name):
         if isinstance(allowed, str):
             allowed = [allowed]
         assert _matches_json_type(value, allowed), (
-            f"Official {schema_name}.{field} violates pinned schema"
+            f"Official {schema_name}.{field} violates generated schema"
         )
         if property_schema.get("format") == "date-time":
             assert _is_rfc3339(value), (
-                f"Official {schema_name}.{field} violates pinned schema"
+                f"Official {schema_name}.{field} violates generated schema"
             )
 
 
@@ -664,13 +637,13 @@ def _aggregate_created_at_epoch_ms(created_at):
     ) * 1000 + delta.microseconds // 1000
 
 
-def validate_official_workflow_aggregates(aggregates, expected_sdk_digest):
+def validate_official_workflow_aggregates(aggregates, expected_sdk_digest, *, schemas):
     assert isinstance(aggregates, list), (
         "Official WorkflowAggregate response must be an array"
     )
     wire = []
     for aggregate in aggregates:
-        _validate_official_aggregate(aggregate, "WorkflowAggregate")
+        _validate_official_aggregate(aggregate, "WorkflowAggregate", schemas=schemas)
         wire.append(
             {
                 "group": aggregate["group"],
@@ -689,13 +662,13 @@ def validate_official_workflow_aggregates(aggregates, expected_sdk_digest):
     )
 
 
-def validate_official_step_aggregates(aggregates, expected_sdk_digest):
+def validate_official_step_aggregates(aggregates, expected_sdk_digest, *, schemas):
     assert isinstance(aggregates, list), (
         "Official StepAggregate response must be an array"
     )
     wire = []
     for aggregate in aggregates:
-        _validate_official_aggregate(aggregate, "StepAggregate")
+        _validate_official_aggregate(aggregate, "StepAggregate", schemas=schemas)
         wire.append(
             {
                 "group": aggregate["group"],
@@ -708,17 +681,17 @@ def validate_official_step_aggregates(aggregates, expected_sdk_digest):
     )
 
 
-def validate_official_export(exported, expected_sdk_digest):
-    schema = _pinned_inspection_schema("ExportWorkflowOutputBody")
+def validate_official_export(exported, expected_sdk_digest, *, schemas):
+    schema = schemas["ExportWorkflowOutputBody"]
     required = set(schema["required"])
     properties = schema["properties"]
     assert isinstance(exported, dict), "Official export response must be an object"
     assert required <= set(exported) <= set(properties), (
-        "Official export fields differ from pinned schema"
+        "Official export fields differ from generated schema"
     )
     serialized = exported.get("serializedWorkflow")
     assert isinstance(serialized, str), (
-        "Official export serializedWorkflow violates pinned schema"
+        "Official export serializedWorkflow violates generated schema"
     )
     actual_digest = hashlib.sha256(serialized.encode()).hexdigest()
     assert actual_digest == expected_sdk_digest, (
@@ -934,6 +907,9 @@ def run_case(
                 return peers[0] if isinstance(peers, list) and len(peers) == 1 else None
 
             peer = wait_for(connected, deadline, "released SDK handshake")
+            status, specification = request_json(base, "/openapi.json")
+            assert status == 200, "generated OpenAPI endpoint failed"
+            schemas = specification["components"]["schemas"]
             assert peer["app"] == app, "SDK handshake application identity"
             assert (
                 peer["language"] == "python" and peer["dbos_version"] == SDK_VERSION
@@ -1005,6 +981,7 @@ def run_case(
                 validate_official_workflow(
                     workflow,
                     expected_workflow_read_digests[workflow["workflowId"]],
+                    schemas=schemas,
                 )
                 assert workflow["priority"] == 7, (
                     "official workflow genuine queued priority"
@@ -1050,6 +1027,7 @@ def run_case(
             validate_official_workflow(
                 descending_page[0],
                 workflow_read_without_blobs_digests[descending_page[0]["workflowId"]],
+                schemas=schemas,
             )
             exhausted_query = urllib.parse.urlencode(
                 {
@@ -1110,6 +1088,7 @@ def run_case(
             validate_official_workflow(
                 checked_workflow,
                 expected_workflow_read_digests[selected_workflow_read_id],
+                schemas=schemas,
             )
 
             workflow_status, _, default_search = request_json_response(
@@ -1127,6 +1106,7 @@ def run_case(
             validate_official_workflow(
                 default_search[0],
                 workflow_read_without_blobs_digests[selected_workflow_read_id],
+                schemas=schemas,
             )
 
             for field, value in (
@@ -1168,6 +1148,7 @@ def run_case(
             validate_official_workflow(
                 official_workflow,
                 expected_workflow_read_digests[selected_workflow_read_id],
+                schemas=schemas,
             )
 
             workflow_status, content_type, problem = request_json_response(
@@ -1197,6 +1178,7 @@ def run_case(
                     if metadata_only
                     else direct_workflow_digest
                 ),
+                schemas=schemas,
             )
             for path, method, payload, label in (
                 (
@@ -1237,7 +1219,9 @@ def run_case(
             )
             status, workflows = request_json(
                 base,
-                prefix + "/workflows?" + urllib.parse.urlencode({"id_prefix": workflow_id}),
+                prefix
+                + "/workflows?"
+                + urllib.parse.urlencode({"id_prefix": workflow_id}),
             )
             assert status == 200 and any(
                 row["WorkflowUUID"] == workflow_id for row in workflows
@@ -1291,7 +1275,7 @@ def run_case(
             )
             official_by_name = {row["name"]: row for row in official_queues}
             for name, digest in queue_digests.items():
-                validate_official_queue(official_by_name[name], digest)
+                validate_official_queue(official_by_name[name], digest, schemas=schemas)
 
             official_gate_queue = official_by_name["gate-queue"]
             assert (
@@ -1320,7 +1304,9 @@ def run_case(
             if bad_queue_field and not metadata_only:
                 official_queue = dict(official_queue)
                 official_queue["partitionRateLimitMax"] = 0
-            validate_official_queue(official_queue, queue_digests["gate-queue"])
+            validate_official_queue(
+                official_queue, queue_digests["gate-queue"], schemas=schemas
+            )
 
             status, content_type, problem = request_json_response(
                 base, official_root + "/missing-queue"
@@ -1378,7 +1364,9 @@ def run_case(
             digest_label = "without_context" if metadata_only else "context"
             for name, digests in schedule_digests.items():
                 validate_official_schedule(
-                    official_schedules_by_name[name], digests[digest_label]
+                    official_schedules_by_name[name],
+                    digests[digest_label],
+                    schemas=schemas,
                 )
 
             schedule_with_context = official_schedules_by_name["gate-schedule-context"]
@@ -1425,8 +1413,7 @@ def run_case(
                     official_schedule = dict(official_schedule)
                     official_schedule["automaticBackfill"] = True
                 validate_official_schedule(
-                    official_schedule,
-                    digests[digest_label],
+                    official_schedule, digests[digest_label], schemas=schemas
                 )
 
             filter_query = urllib.parse.urlencode(
@@ -1454,6 +1441,7 @@ def run_case(
                 validate_official_schedule(
                     schedule,
                     schedule_digests[schedule["scheduleName"]]["without_context"],
+                    schemas=schemas,
                 )
 
             empty_query = urllib.parse.urlencode(
@@ -1573,7 +1561,9 @@ def run_case(
                     event_digests
                 ), "official event keys"
                 for event in official_events:
-                    validate_official_event(event, event_digests[event["key"]])
+                    validate_official_event(
+                        event, event_digests[event["key"]], schemas=schemas
+                    )
 
                 related_status, content_type, official_notifications = (
                     request_json_response(base, official_related_paths["notifications"])
@@ -1602,7 +1592,7 @@ def run_case(
                         "official pending notification consumed flag"
                     )
                     validate_official_notification(
-                        notification, notification_digests[label]
+                        notification, notification_digests[label], schemas=schemas
                     )
                 assert seen_notification_labels == set(notification_digests), (
                     "official nullable/empty notification topics"
@@ -1636,7 +1626,7 @@ def run_case(
                         checked_stream["values"] = list(stream["values"])
                         checked_stream["values"][1] = "corrupted-related-field"
                     validate_official_stream(
-                        checked_stream, stream_digests[stream["key"]]
+                        checked_stream, stream_digests[stream["key"]], schemas=schemas
                     )
 
                 empty_related_root = official_workflow_root + urllib.parse.quote(
@@ -1728,7 +1718,7 @@ def run_case(
                 checked_workflow_aggregates = [dict(workflow_aggregates[0])]
                 checked_workflow_aggregates[0]["count"] += 1
             validate_official_workflow_aggregates(
-                checked_workflow_aggregates, workflow_aggregate_digest
+                checked_workflow_aggregates, workflow_aggregate_digest, schemas=schemas
             )
 
             step_aggregate_path = official_app_root + "/steps/aggregates"
@@ -1756,7 +1746,9 @@ def run_case(
                 and isinstance(step_aggregates, list)
                 and len(step_aggregates) == 1
             ), "official step aggregate response"
-            validate_official_step_aggregates(step_aggregates, step_aggregate_digest)
+            validate_official_step_aggregates(
+                step_aggregates, step_aggregate_digest, schemas=schemas
+            )
 
             # The released handlers default to count only when every select flag
             # is omitted. Restrict by workflow ID so the independent fixture
@@ -1874,7 +1866,9 @@ def run_case(
                     time.monotonic() + 3,
                     "observed SDK export frame digest",
                 )
-                validate_official_export(exported, observed_export_digest)
+                validate_official_export(
+                    exported, observed_export_digest, schemas=schemas
+                )
 
             export_status, content_type, problem = request_json_response(
                 base, official_workflow_root + "missing-workflow/export"
@@ -1937,8 +1931,13 @@ def run_case(
                     console_ready = temp / "console.json"
                     console_ready.write_text(json.dumps(ready["console"]))
                     subprocess.run(
-                        ["node", str(ROOT / "dev/tests/console_browser.mjs"),
-                         "real", base, str(console_ready)],
+                        [
+                            "node",
+                            str(ROOT / "dev/tests/console_browser.mjs"),
+                            "real",
+                            base,
+                            str(console_ready),
+                        ],
                         env=environment,
                         timeout=90,
                         check=True,
@@ -2123,7 +2122,8 @@ def stat_mode(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--console-browser", action="store_true",
+        "--console-browser",
+        action="store_true",
         help="also verify Console traversal/search in an explicitly supplied browser",
     )
     parser.add_argument(
@@ -2190,7 +2190,9 @@ def main():
             for key in ("PLAYWRIGHT_MODULE", "CHROMIUM_BIN"):
                 tool = Path(os.environ.get(key, ""))
                 if not tool.is_absolute() or not tool.is_file():
-                    raise RuntimeError(f"{key} must name an existing absolute tool path")
+                    raise RuntimeError(
+                        f"{key} must name an existing absolute tool path"
+                    )
                 worker_environment[key] = str(tool)
         command = [
             sys.executable,

@@ -166,34 +166,34 @@ func (s *Server) localV2ReadRelated(r *http.Request, app, workflowID, field stri
 	return records, 0, err
 }
 
-type localV2Event struct {
+type Event struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-func localV2EventRecord(raw json.RawMessage) (localV2Event, error) {
+func localV2EventRecord(raw json.RawMessage) (Event, error) {
 	fields, err := localV2RawObject(raw, "event")
 	if err != nil {
-		return localV2Event{}, err
+		return Event{}, err
 	}
 	if len(fields) != 2 {
-		return localV2Event{}, errors.New("invalid executor event: unexpected fields")
+		return Event{}, errors.New("invalid executor event: unexpected fields")
 	}
 	key, err := localV2RequiredString(fields, "key", "event")
 	if err != nil {
-		return localV2Event{}, err
+		return Event{}, err
 	}
 	value, err := localV2RequiredString(fields, "value", "event")
 	if err != nil {
-		return localV2Event{}, err
+		return Event{}, err
 	}
-	return localV2Event{Key: key, Value: value}, nil
+	return Event{Key: key, Value: value}, nil
 }
 
-type localV2Notification struct {
+type Notification struct {
 	Topic     *string `json:"topic"`
 	Message   string  `json:"message"`
-	CreatedAt string  `json:"createdAt"`
+	CreatedAt string  `json:"createdAt" format:"date-time"`
 	Consumed  bool    `json:"consumed"`
 }
 
@@ -209,85 +209,85 @@ func localV2NotificationTime(milliseconds int64) (string, error) {
 	return time.Unix(seconds, remainder*int64(time.Millisecond)).UTC().Format("2006-01-02T15:04:05.000Z07:00"), nil
 }
 
-func localV2NotificationRecord(raw json.RawMessage) (localV2Notification, error) {
+func localV2NotificationRecord(raw json.RawMessage) (Notification, error) {
 	fields, err := localV2RawObject(raw, "notification")
 	if err != nil {
-		return localV2Notification{}, err
+		return Notification{}, err
 	}
 	if len(fields) != 4 {
-		return localV2Notification{}, errors.New("invalid executor notification: unexpected fields")
+		return Notification{}, errors.New("invalid executor notification: unexpected fields")
 	}
 	topicRaw, ok := fields["topic"]
 	if !ok {
-		return localV2Notification{}, errors.New("invalid executor notification: missing topic")
+		return Notification{}, errors.New("invalid executor notification: missing topic")
 	}
 	var topic *string
 	if !bytes.Equal(topicRaw, []byte("null")) {
 		var value string
 		if err := json.Unmarshal(topicRaw, &value); err != nil {
-			return localV2Notification{}, errors.New("invalid executor notification.topic: string or null required")
+			return Notification{}, errors.New("invalid executor notification.topic: string or null required")
 		}
 		topic = &value
 	}
 	message, err := localV2RequiredString(fields, "message", "notification")
 	if err != nil {
-		return localV2Notification{}, err
+		return Notification{}, err
 	}
 	createdRaw, ok := fields["created_at_epoch_ms"]
 	if !ok || bytes.Equal(createdRaw, []byte("null")) {
-		return localV2Notification{}, errors.New("invalid executor notification: missing or null created_at_epoch_ms")
+		return Notification{}, errors.New("invalid executor notification: missing or null created_at_epoch_ms")
 	}
 	var milliseconds int64
 	if err := json.Unmarshal(createdRaw, &milliseconds); err != nil {
-		return localV2Notification{}, errors.New("invalid executor notification.created_at_epoch_ms: integer required")
+		return Notification{}, errors.New("invalid executor notification.created_at_epoch_ms: integer required")
 	}
 	createdAt, err := localV2NotificationTime(milliseconds)
 	if err != nil {
-		return localV2Notification{}, err
+		return Notification{}, err
 	}
 	consumedRaw, ok := fields["consumed"]
 	if !ok || bytes.Equal(consumedRaw, []byte("null")) {
-		return localV2Notification{}, errors.New("invalid executor notification: missing or null consumed")
+		return Notification{}, errors.New("invalid executor notification: missing or null consumed")
 	}
 	var consumed bool
 	if err := json.Unmarshal(consumedRaw, &consumed); err != nil {
-		return localV2Notification{}, errors.New("invalid executor notification.consumed: boolean required")
+		return Notification{}, errors.New("invalid executor notification.consumed: boolean required")
 	}
-	return localV2Notification{Topic: topic, Message: message, CreatedAt: createdAt, Consumed: consumed}, nil
+	return Notification{Topic: topic, Message: message, CreatedAt: createdAt, Consumed: consumed}, nil
 }
 
-type localV2StreamEntry struct {
+type StreamEntry struct {
 	Key    string   `json:"key"`
-	Values []string `json:"values"`
+	Values []string `json:"values" nullable:"false"`
 }
 
-func localV2StreamRecord(raw json.RawMessage) (localV2StreamEntry, error) {
+func localV2StreamRecord(raw json.RawMessage) (StreamEntry, error) {
 	fields, err := localV2RawObject(raw, "stream entry")
 	if err != nil {
-		return localV2StreamEntry{}, err
+		return StreamEntry{}, err
 	}
 	if len(fields) != 2 {
-		return localV2StreamEntry{}, errors.New("invalid executor stream entry: unexpected fields")
+		return StreamEntry{}, errors.New("invalid executor stream entry: unexpected fields")
 	}
 	key, err := localV2RequiredString(fields, "key", "stream entry")
 	if err != nil {
-		return localV2StreamEntry{}, err
+		return StreamEntry{}, err
 	}
 	valuesRaw, ok := fields["values"]
 	if !ok || bytes.Equal(valuesRaw, []byte("null")) {
-		return localV2StreamEntry{}, errors.New("invalid executor stream entry: missing or null values")
+		return StreamEntry{}, errors.New("invalid executor stream entry: missing or null values")
 	}
 	var rawValues []json.RawMessage
 	if err := json.Unmarshal(valuesRaw, &rawValues); err != nil {
-		return localV2StreamEntry{}, errors.New("invalid executor stream entry.values: array required")
+		return StreamEntry{}, errors.New("invalid executor stream entry.values: array required")
 	}
 	values := make([]string, len(rawValues))
 	for i, rawValue := range rawValues {
 		if bytes.Equal(rawValue, []byte("null")) || json.Unmarshal(rawValue, &values[i]) != nil {
-			return localV2StreamEntry{}, fmt.Errorf("invalid executor stream entry.values[%d]: string required", i)
+			return StreamEntry{}, fmt.Errorf("invalid executor stream entry.values[%d]: string required", i)
 		}
 	}
-	return localV2StreamEntry{Key: key, Values: values}, nil
+	return StreamEntry{Key: key, Values: values}, nil
 }
 
 func (s *Server) localV2Events(w http.ResponseWriter, r *http.Request) {
@@ -304,7 +304,7 @@ func (s *Server) localV2Events(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	out := make([]localV2Event, 0, len(records))
+	out := make([]Event, 0, len(records))
 	for _, raw := range records {
 		record, err := localV2EventRecord(raw)
 		if err != nil {
@@ -330,7 +330,7 @@ func (s *Server) localV2Notifications(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	out := make([]localV2Notification, 0, len(records))
+	out := make([]Notification, 0, len(records))
 	for _, raw := range records {
 		record, err := localV2NotificationRecord(raw)
 		if err != nil {
@@ -356,7 +356,7 @@ func (s *Server) localV2Streams(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	out := make([]localV2StreamEntry, 0, len(records))
+	out := make([]StreamEntry, 0, len(records))
 	for _, raw := range records {
 		record, err := localV2StreamRecord(raw)
 		if err != nil {

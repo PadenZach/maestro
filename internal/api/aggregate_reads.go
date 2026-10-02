@@ -7,8 +7,12 @@ import (
 	"github.com/zpaden/maestro/internal/protocol"
 )
 
+type aggregateResult interface {
+	consoleRow() aggregateRow
+}
+
 // Both HTTP representations use the same executor read and response validation.
-func (s *Server) readAggregates(ctx context.Context, app string, request protocol.Request, mapRecord func(json.RawMessage) (map[string]any, error)) ([]map[string]any, error) {
+func (s *Server) readAggregates(ctx context.Context, app string, request protocol.Request, mapRecord func(json.RawMessage) (aggregateResult, error)) ([]aggregateResult, error) {
 	raw, err := s.hub.Request(ctx, app, request)
 	if err != nil {
 		return nil, err
@@ -17,7 +21,7 @@ func (s *Server) readAggregates(ctx context.Context, app string, request protoco
 	if err != nil {
 		return nil, err
 	}
-	out := make([]map[string]any, 0, len(records))
+	out := make([]aggregateResult, 0, len(records))
 	for _, record := range records {
 		mapped, err := mapRecord(record)
 		if err != nil {

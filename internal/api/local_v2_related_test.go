@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -68,14 +67,10 @@ func relatedHTTPType(value any) string {
 	}
 }
 
-// assertRelatedSchema is an OpenAPI-snapshot oracle. It neither imports nor
-// derives expected fields from maestro's mappers or protocol DTOs.
+// assertRelatedSchema checks that actual responses match the generated documentation.
 func assertRelatedSchema(t *testing.T, schemaName string, record map[string]any) {
 	t.Helper()
-	snapshot, err := os.ReadFile("../../docs/reference/conductor-openapi-2026-09-25.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshot := generatedOpenAPIJSON(t)
 	var spec struct {
 		Components struct {
 			Schemas map[string]struct {
@@ -96,7 +91,7 @@ func assertRelatedSchema(t *testing.T, schemaName string, record map[string]any)
 	}
 	schema, ok := spec.Components.Schemas[schemaName]
 	if !ok || len(schema.Required) == 0 {
-		t.Fatalf("pinned schema %s missing", schemaName)
+		t.Fatalf("generated schema %s missing", schemaName)
 	}
 	for _, field := range schema.Required {
 		if _, ok := record[field]; !ok {

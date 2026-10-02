@@ -11,7 +11,7 @@ import (
 
 // The official Queue schema differs from executor QueueOutput, including the
 // plural Secs suffix. Nullable values stay null, including legacy SDK fields.
-func localV2Queue(q protocol.QueueOutput) (map[string]any, error) {
+func localV2Queue(q protocol.QueueOutput) (*Queue, error) {
 	if !q.HasRequiredFields() {
 		return nil, fmt.Errorf("queue missing non-nullable fields")
 	}
@@ -20,13 +20,13 @@ func localV2Queue(q protocol.QueueOutput) (map[string]any, error) {
 			return nil, fmt.Errorf("queue integer outside int32 range")
 		}
 	}
-	return map[string]any{
-		"name": q.Name, "concurrency": q.Concurrency, "workerConcurrency": q.WorkerConcurrency,
-		"rateLimitMax": q.RateLimitMax, "rateLimitPeriodSecs": q.RateLimitPeriodSec,
-		"priorityEnabled": q.PriorityEnabled, "partitionQueue": q.PartitionQueue,
-		"pollingIntervalSecs": q.PollingIntervalSec, "applicationName": q.ApplicationName,
-		"partitionConcurrency": q.PartitionConcurrency, "partitionWorkerConcurrency": q.PartitionWorkerConcurrency,
-		"partitionRateLimitMax": q.PartitionRateLimitMax, "partitionRateLimitPeriodSecs": q.PartitionRateLimitPeriodSec,
+	return &Queue{
+		Name: q.Name, Concurrency: q.Concurrency, WorkerConcurrency: q.WorkerConcurrency,
+		RateLimitMax: q.RateLimitMax, RateLimitPeriodSecs: q.RateLimitPeriodSec,
+		PriorityEnabled: q.PriorityEnabled, PartitionQueue: q.PartitionQueue,
+		PollingIntervalSecs: q.PollingIntervalSec, ApplicationName: q.ApplicationName,
+		PartitionConcurrency: q.PartitionConcurrency, PartitionWorkerConcurrency: q.PartitionWorkerConcurrency,
+		PartitionRateLimitMax: q.PartitionRateLimitMax, PartitionRateLimitPeriodSecs: q.PartitionRateLimitPeriodSec,
 	}, nil
 }
 
@@ -52,7 +52,7 @@ func (s *Server) localV2Queues(w http.ResponseWriter, r *http.Request) {
 		localV2Problem(w, 502, "queue list unavailable")
 		return
 	}
-	rows := make([]map[string]any, 0, len(resp.Output))
+	rows := make([]*Queue, 0, len(resp.Output))
 	for _, q := range resp.Output {
 		row, err := localV2Queue(q)
 		if err != nil {

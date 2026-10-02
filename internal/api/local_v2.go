@@ -32,7 +32,7 @@ func (s *Server) localV2Allowed(w http.ResponseWriter, r *http.Request) bool {
 func localV2Problem(w http.ResponseWriter, status int, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail})
+	_ = json.NewEncoder(w).Encode(Problem{Type: "about:blank", Title: http.StatusText(status), Status: status, Detail: detail})
 }
 func localV2Failure(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
@@ -162,7 +162,7 @@ func (s *Server) localV2Steps(w http.ResponseWriter, r *http.Request) {
 		localV2Failure(w, errors.New("invalid executor list_steps output: null"))
 		return
 	}
-	out := make([]map[string]any, 0, len(steps))
+	out := make([]*Step, 0, len(steps))
 	for _, step := range steps {
 		v, err := localV2Step(step)
 		if err != nil {
@@ -174,7 +174,7 @@ func (s *Server) localV2Steps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-func localV2Time(s *string, name string, required bool) (any, error) {
+func localV2Time(s *string, name string, required bool) (*string, error) {
 	if s == nil {
 		if required {
 			return nil, fmt.Errorf("invalid executor %s: missing timestamp", name)
@@ -190,9 +190,10 @@ func localV2Time(s *string, name string, required bool) (any, error) {
 	if n < -62135596800000 || n > 253402300799999 {
 		return nil, fmt.Errorf("invalid executor %s: timestamp out of range", name)
 	}
-	return time.Unix(sec, ms*int64(time.Millisecond)).UTC().Format("2006-01-02T15:04:05.000Z07:00"), nil
+	value := time.Unix(sec, ms*int64(time.Millisecond)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
+	return &value, nil
 }
-func localV2Number(s *string, name string, required bool) (any, error) {
+func localV2Number(s *string, name string, required bool) (*int64, error) {
 	if s == nil {
 		if required {
 			return nil, fmt.Errorf("invalid executor %s: missing number", name)
@@ -206,9 +207,9 @@ func localV2Number(s *string, name string, required bool) (any, error) {
 	if name == "priority" && (n < -2147483648 || n > 2147483647) {
 		return nil, fmt.Errorf("invalid executor %s: int32 required", name)
 	}
-	return n, nil
+	return &n, nil
 }
-func localV2Workflow(w protocol.WorkflowsOutput) (map[string]any, error) {
+func localV2Workflow(w protocol.WorkflowsOutput) (*Workflow, error) {
 	if w.WorkflowUUID == "" || w.Status == nil || *w.Status == "" {
 		return nil, errors.New("invalid executor workflow identity/status")
 	}
@@ -222,40 +223,42 @@ func localV2Workflow(w protocol.WorkflowsOutput) (map[string]any, error) {
 			return nil, fmt.Errorf("invalid executor workflow: missing %s", field)
 		}
 	}
-	out := map[string]any{"workflowId": w.WorkflowUUID, "status": *w.Status,
-		"workflowName": w.WorkflowName, "workflowClass": w.WorkflowClassName, "workflowConfig": w.WorkflowConfigName,
-		"user": w.AuthenticatedUser, "assumedRole": w.AssumedRole, "roles": w.AuthenticatedRoles,
-		"input": w.Input, "output": w.Output, "error": w.Error, "queueName": w.QueueName,
-		"appVersion": w.ApplicationVersion, "executorId": w.ExecutorID, "deduplicationId": w.DeduplicationID,
-		"queuePartitionKey": w.QueuePartitionKey, "forkedFrom": w.ForkedFrom, "wasForkedFrom": w.WasForkedFrom,
-		"parentWorkflowId": w.ParentWorkflowID, "attributes": w.Attributes, "scheduleName": w.ScheduleName, "applicationName": w.ApplicationName,
+	out := &Workflow{WorkflowID: w.WorkflowUUID, Status: *w.Status,
+		WorkflowName: w.WorkflowName, WorkflowClass: w.WorkflowClassName, WorkflowConfig: w.WorkflowConfigName,
+		User: w.AuthenticatedUser, AssumedRole: w.AssumedRole, Roles: w.AuthenticatedRoles,
+		Input: w.Input, Output: w.Output, Error: w.Error, QueueName: w.QueueName,
+		AppVersion: w.ApplicationVersion, ExecutorID: w.ExecutorID, DeduplicationID: w.DeduplicationID,
+		QueuePartitionKey: w.QueuePartitionKey, ForkedFrom: w.ForkedFrom, WasForkedFrom: w.WasForkedFrom,
+		ParentWorkflowID: w.ParentWorkflowID, Attributes: w.Attributes, ScheduleName: w.ScheduleName, ApplicationName: w.ApplicationName,
 	}
-	var err error
 	for _, field := range []struct {
 		name     string
 		value    *string
+		target   **string
 		required bool
 	}{
-		{"createdAt", w.CreatedAt, true}, {"updatedAt", w.UpdatedAt, false}, {"deadline", w.WorkflowDeadlineEpochMS, false}, {"dequeuedAt", w.DequeuedAt, false}, {"delayUntil", w.DelayUntilEpochMS, false}, {"completedAt", w.CompletedAt, false},
+		{"createdAt", w.CreatedAt, &out.CreatedAt, true}, {"updatedAt", w.UpdatedAt, &out.UpdatedAt, false},
+		{"deadline", w.WorkflowDeadlineEpochMS, &out.Deadline, false}, {"dequeuedAt", w.DequeuedAt, &out.DequeuedAt, false},
+		{"delayUntil", w.DelayUntilEpochMS, &out.DelayUntil, false}, {"completedAt", w.CompletedAt, &out.CompletedAt, false},
 	} {
-		out[field.name], err = localV2Time(field.value, field.name, field.required)
+		value, err := localV2Time(field.value, field.name, field.required)
 		if err != nil {
 			return nil, err
 		}
+		*field.target = value
 	}
-	for _, field := range []struct {
-		name     string
-		value    *string
-		required bool
-	}{{"priority", w.Priority, false}, {"timeoutMs", w.WorkflowTimeoutMS, false}} {
-		out[field.name], err = localV2Number(field.value, field.name, field.required)
-		if err != nil {
-			return nil, err
-		}
+	var err error
+	out.Priority, err = localV2Number(w.Priority, "priority", false)
+	if err != nil {
+		return nil, err
+	}
+	out.TimeoutMS, err = localV2Number(w.WorkflowTimeoutMS, "timeoutMs", false)
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
-func localV2Step(s protocol.WorkflowSteps) (map[string]any, error) {
+func localV2Step(s protocol.WorkflowSteps) (*Step, error) {
 	if s.FunctionName == "" {
 		return nil, errors.New("invalid executor step name")
 	}
@@ -265,13 +268,13 @@ func localV2Step(s protocol.WorkflowSteps) (map[string]any, error) {
 	if s.FunctionID < -2147483648 || s.FunctionID > 2147483647 {
 		return nil, errors.New("invalid executor stepId: int32 required")
 	}
-	out := map[string]any{"stepId": s.FunctionID, "stepName": s.FunctionName, "output": s.Output, "error": s.Error, "childWorkflowId": s.ChildWorkflowID}
+	out := &Step{StepID: s.FunctionID, StepName: s.FunctionName, Output: s.Output, Error: s.Error, ChildWorkflowID: s.ChildWorkflowID}
 	var err error
-	out["startedAt"], err = localV2Time(s.StartedAtEpochMS, "startedAt", false)
+	out.StartedAt, err = localV2Time(s.StartedAtEpochMS, "startedAt", false)
 	if err != nil {
 		return nil, err
 	}
-	out["completedAt"], err = localV2Time(s.CompletedAtEpochMS, "completedAt", false)
+	out.CompletedAt, err = localV2Time(s.CompletedAtEpochMS, "completedAt", false)
 	if err != nil {
 		return nil, err
 	}
