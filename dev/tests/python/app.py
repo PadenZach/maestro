@@ -45,28 +45,19 @@ def gate_scheduled(when, context) -> str:
 
 try:
     DBOS.launch()
-    if version == "2.24.0":
-        DBOS.register_queue(
-            "gate-queue",
-            concurrency=2,
-            worker_concurrency=1,
-            limiter={"limit": 5, "period": 1.0},
-        )
-    else:
-        DBOS.register_queue(
-            "gate-queue",
-            global_concurrency=3,
-            worker_concurrency=2,
-            partition_concurrency=2,
-            partition_worker_concurrency=1,
-            limiter={"limit": 5, "period": 1.0},
-            partition_limiter={"limit": 4, "period": 2.0},
-        )
+    DBOS.register_queue(
+        "gate-queue",
+        global_concurrency=3,
+        worker_concurrency=2,
+        partition_concurrency=2,
+        partition_worker_concurrency=1,
+        limiter={"limit": 5, "period": 1.0},
+        partition_limiter={"limit": 4, "period": 2.0},
+    )
     # SDK populates its own SQLite DB. Only publish the id, never serialized data.
     handle = DBOS.start_workflow(gate_workflow, "gate-value")
     assert handle.get_result() == "step-gate-value"
-    if version != "2.24.0":
-        DBOS.update_workflow_attributes(handle.workflow_id, {"gate": "visible"})
+    DBOS.update_workflow_attributes(handle.workflow_id, {"gate": "visible"})
     sdk_info = get_workflow(dbos._sys_db, handle.workflow_id)
     assert sdk_info is not None
     sdk_wire = WorkflowsOutput.from_workflow_information(sdk_info)
@@ -77,15 +68,14 @@ try:
         "input_sha256": hashlib.sha256(sdk_wire.Input.encode()).hexdigest(),
         "output_sha256": hashlib.sha256(sdk_wire.Output.encode()).hexdigest(),
     }
-    if version != "2.24.0":
-        DBOS.create_schedule(
-            schedule_name="gate-schedule",
-            workflow_fn=gate_scheduled,
-            schedule="0 0 1 1 *",
-        )
-        scheduled = DBOS.trigger_schedule("gate-schedule")
-        assert scheduled.get_result() == "step-scheduled"
-        ready["scheduled_workflow_id"] = scheduled.workflow_id
+    DBOS.create_schedule(
+        schedule_name="gate-schedule",
+        workflow_fn=gate_scheduled,
+        schedule="0 0 1 1 *",
+    )
+    scheduled = DBOS.trigger_schedule("gate-schedule")
+    assert scheduled.get_result() == "step-scheduled"
+    ready["scheduled_workflow_id"] = scheduled.workflow_id
     Path(os.environ["GATE_READY"]).write_text(json.dumps(ready))
     original_events = dbos._sys_db.get_all_events
     for line in sys.stdin:

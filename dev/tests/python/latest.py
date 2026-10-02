@@ -1,4 +1,4 @@
-"""Run the existing SDK transport checks against the latest stable 2.x/3.x releases."""
+"""Run the existing SDK transport checks against the latest stable 2.31.x/3.x releases."""
 
 import argparse
 import json
@@ -98,7 +98,7 @@ def main():
                     "https://pypi.org/simple",
                     "--prerelease",
                     "disallow",
-                    f"dbos>={major},<{int(major) + 1}",
+                    "dbos>=2.31,<2.32" if major == "2" else "dbos>=3,<4",
                 ],
                 env=clean,
                 check=True,
@@ -142,7 +142,8 @@ def main():
                 )
                 + "\n"
             )
-            print(f"Testing latest DBOS {major}.x: {version}", flush=True)
+            series = "2.31.x" if major == "2" else "3.x"
+            print(f"Testing latest DBOS {series}: {version}", flush=True)
             command = [
                 sys.executable,
                 "-B",

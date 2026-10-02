@@ -24,7 +24,7 @@ func localV2Server(t *testing.T) (*httptest.Server, *hub.Hub) {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := hub.New(log, 2*time.Second)
-	srv := api.New(config.Config{ConductorKey: "testkey", ListenAddr: "127.0.0.1:0"}, h, log)
+	srv := api.New(config.Config{ConductorKey: "testkey", ListenAddr: "127.0.0.1:0", EnableAggregates: true}, h, log)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts, h

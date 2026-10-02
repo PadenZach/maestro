@@ -28,6 +28,9 @@ type Config struct {
 	// AllowRemote lifts the listener and Conductor client loopback restriction for
 	// deployments behind a gateway. It does not provide authentication.
 	AllowRemote bool
+	// EnableAggregates exposes the advanced aggregate viewer and query API.
+	// Fixed application overview queries remain available independently.
+	EnableAggregates bool
 }
 
 // Load resolves configuration from environment variables, then lets command
@@ -45,6 +48,7 @@ func Load() Config {
 	flags.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
 	flags.StringVar(&cfg.OrgName, "org", cfg.OrgName, "single organization identifier (3-30 lowercase letters, digits or underscores)")
 	flags.BoolVar(&cfg.AllowRemote, "allow-remote", envBool("CONDUCTOR_ALLOW_REMOTE"), "allow non-loopback access behind an external gateway")
+	flags.BoolVar(&cfg.EnableAggregates, "enable-aggregates", envBool("CONDUCTOR_ENABLE_AGGREGATES"), "enable advanced aggregate queries and viewer (disabled by default)")
 	_ = flags.Parse(os.Args[1:])
 	if !regexp.MustCompile(`^[a-z0-9_]{3,30}$`).MatchString(cfg.OrgName) {
 		fmt.Fprintln(os.Stderr, "--org must contain 3-30 lowercase letters, digits or underscores")

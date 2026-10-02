@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zpaden/maestro/internal/hub"
 	"github.com/zpaden/maestro/internal/protocol"
@@ -48,17 +49,59 @@ type appSummary struct {
 }
 
 type filterState struct {
-	Status   string
-	Name     string
-	IDPrefix string
-	Queue    string
+	// Status supports the single-status JSON API; Console uses Statuses.
+	Status          string
+	Statuses        []string
+	Name            string
+	IDPrefix        string
+	Queue           string
+	StartTime       string
+	EndTime         string
+	IncludeChildren bool
+	// Nil preserves the JSON API's existing all-executions behavior.
+	HasParent *bool
+}
+
+func (f filterState) statusValues() []string {
+	if len(f.Statuses) > 0 {
+		return f.Statuses
+	}
+	if f.Status != "" {
+		return []string{f.Status}
+	}
+	return nil
+}
+
+func (f filterState) HasStatus(status string) bool {
+	for _, value := range f.statusValues() {
+		if value == status {
+			return true
+		}
+	}
+	return false
+}
+
+func (f filterState) Active() bool {
+	return len(f.statusValues()) > 0 || f.Name != "" || f.IDPrefix != "" || f.Queue != "" || f.StartTime != "" || f.EndTime != ""
+}
+
+func (f filterState) StatusLabel() string {
+	statuses := f.statusValues()
+	if len(statuses) == 0 {
+		return "All statuses"
+	}
+	if len(statuses) == 1 {
+		return statuses[0]
+	}
+	return fmt.Sprintf("%d statuses", len(statuses))
 }
 
 type workflowsData struct {
-	App      string
-	Statuses []string
-	Filter   filterState
-	Rows     workflowRows
+	App               string
+	Statuses          []string
+	Filter            filterState
+	Rows              workflowRows
+	AggregatesEnabled bool
 }
 
 type workflowRows struct {
@@ -67,6 +110,8 @@ type workflowRows struct {
 	RangeLabel string
 	PrevURL    string
 	NextURL    string
+	RefreshURL string
+	Filter     filterState
 }
 
 type detailData struct {
@@ -80,11 +125,12 @@ type detailData struct {
 }
 
 type detailLive struct {
-	App       string
-	WF        *protocol.WorkflowsOutput
-	Timeline  web.Timeline
-	IsRunning bool
-	Flash     string
+	App           string
+	WF            *protocol.WorkflowsOutput
+	Timeline      web.Timeline
+	IsRunning     bool
+	Flash         string
+	TimelineError string
 }
 
 type queuesData struct {
@@ -212,9 +258,14 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
-	f := parseFilter(r)
+	f, err := parseFilter(r)
+	if err != nil {
+		s.renderStatusError(w, http.StatusBadRequest, workflowsCrumbs(app), err)
+		return
+	}
 	f.Name = strings.TrimSpace(f.Name)
-	rows, err := s.fetchConsoleRows(r.Context(), app, f, 0)
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	rows, err := s.fetchConsoleRows(r.Context(), app, f, offset)
 	if err != nil {
 		s.renderErrorPage(w, workflowsCrumbs(app), err)
 		return
@@ -225,17 +276,23 @@ func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {
 		Status:        s.statusForPage(false),
 		Crumbs:        workflowsCrumbs(app),
 		Data: workflowsData{
-			App:      app,
-			Statuses: knownStatuses,
-			Filter:   f,
-			Rows:     rows,
+			App:               app,
+			Statuses:          workflowFilterStatuses(f),
+			Filter:            f,
+			Rows:              rows,
+			AggregatesEnabled: s.cfg.EnableAggregates,
 		},
 	})
 }
 
 func (s *Server) handleWorkflowRows(w http.ResponseWriter, r *http.Request) {
 	app := r.PathValue("app")
-	f := parseFilter(r)
+	f, err := parseFilter(r)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		partialError(w, err)
+		return
+	}
 	f.Name = strings.TrimSpace(f.Name)
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	rows, err := s.fetchConsoleRows(r.Context(), app, f, offset)
@@ -243,6 +300,8 @@ func (s *Server) handleWorkflowRows(w http.ResponseWriter, r *http.Request) {
 		partialError(w, err)
 		return
 	}
+	// History entries must be reloadable full pages, including the current offset.
+	w.Header().Set("HX-Push-Url", workflowsURL(app, f, offset))
 	s.web.Partial(w, "workflow_rows", rows)
 }
 
@@ -256,9 +315,9 @@ func (s *Server) fetchRows(ctx context.Context, app string, f filterState, offse
 		Limit:    &over,
 		Offset:   &offset,
 	}
-	if f.Status != "" {
-		body.Status = []string{f.Status}
-	}
+	body.Status = f.statusValues()
+	body.StartTime, body.EndTime = f.StartTime, f.EndTime
+	body.HasParent = f.HasParent
 	if f.Name != "" {
 		body.WorkflowName = []string{f.Name}
 	}
@@ -283,7 +342,7 @@ func paginateRows(app string, f filterState, offset int, workflows []protocol.Wo
 	if hasNext {
 		workflows = workflows[:defaultPageSize]
 	}
-	rows := workflowRows{App: app, Workflows: workflows, RangeLabel: "No results"}
+	rows := workflowRows{App: app, Workflows: workflows, RangeLabel: "No results", RefreshURL: rowsURL(app, f, offset), Filter: f}
 	if len(workflows) > 0 {
 		rows.RangeLabel = fmt.Sprintf("%d–%d", offset+1, offset+len(workflows))
 	}
@@ -332,7 +391,9 @@ func (s *Server) handleWorkflowLive(w http.ResponseWriter, r *http.Request) {
 // buildDetailLive fetches the workflow header + steps and assembles the pollable
 // live region (status, actions, gantt timeline).
 func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (detailLive, error) {
-	wf, err := s.readWorkflow(ctx, app, id, true, true)
+	ctx, cancel := context.WithTimeout(ctx, flowReadTimeout)
+	defer cancel()
+	wf, err := s.readWorkflow(ctx, app, id, false, false)
 	if err != nil {
 		return detailLive{}, err
 	}
@@ -340,16 +401,20 @@ func (s *Server) buildDetailLive(ctx context.Context, app, id, flash string) (de
 		return detailLive{}, fmt.Errorf("workflow %q not found", id)
 	}
 
-	steps, err := s.readSteps(ctx, app, id, true, nil, nil)
+	steps, more, err := s.readTimelinePage(ctx, app, id, 0)
+	tl := web.BuildTimeline(app, id, steps)
+	setTimelinePage(&tl, 0, more, "", nil)
+	timelineError := ""
 	if err != nil {
-		return detailLive{}, err
+		timelineError = htmlErrorText(err)
 	}
 	return detailLive{
-		App:       app,
-		WF:        wf,
-		Timeline:  web.BuildTimeline(app, id, steps),
-		IsRunning: isRunning(wf.Status),
-		Flash:     flash,
+		App:           app,
+		WF:            wf,
+		Timeline:      tl,
+		TimelineError: timelineError,
+		IsRunning:     isRunning(wf.Status),
+		Flash:         flash,
 	}, nil
 }
 
@@ -357,6 +422,17 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 	app := r.PathValue("app")
 	id := r.PathValue("id")
 	query := r.URL.Query()
+	offset, offsetErr := flowOffset(query)
+	if offsetErr != nil {
+		partialError(w, offsetErr)
+		return
+	}
+	if len(query["ancestor"]) > 8 {
+		partialMessage(w, "Timeline depth limit reached. Open this workflow to continue.")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), flowReadTimeout)
+	defer cancel()
 	starts, hasStart := query["window_start"]
 	ends, hasEnd := query["window_end"]
 	var start, end int64
@@ -373,7 +449,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	wf, err := s.readWorkflow(r.Context(), app, id, false, false)
+	wf, err := s.readWorkflow(ctx, app, id, false, false)
 	if err != nil {
 		partialError(w, err)
 		return
@@ -389,7 +465,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	steps, err := s.readSteps(r.Context(), app, id, true, nil, nil)
+	steps, more, err := s.readTimelinePage(ctx, app, id, offset)
 	if err != nil {
 		partialError(w, err)
 		return
@@ -402,6 +478,7 @@ func (s *Server) handleWorkflowTimeline(w http.ResponseWriter, r *http.Request) 
 	}
 	tl.ChildStatus = deref(wf.Status)
 	web.SetTimelineBranch(&tl, query.Get("branch"), ancestors)
+	setTimelinePage(&tl, offset, more, query.Get("branch"), ancestors)
 	s.web.Partial(w, "timeline_rows", tl)
 }
 
@@ -481,20 +558,96 @@ func (s *Server) handleQueues(w http.ResponseWriter, r *http.Request) {
 
 // --- small helpers ----------------------------------------------------------
 
-func parseFilter(r *http.Request) filterState {
-	q := r.URL.Query()
-	return filterState{
-		Status:   q.Get("status"),
-		Name:     q.Get("name"),
-		IDPrefix: q.Get("id_prefix"),
-		Queue:    q.Get("queue"),
+func parseFilter(r *http.Request) (filterState, error) {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return filterState{}, fmt.Errorf("invalid workflow filters: %w", err)
 	}
+	for name, values := range q {
+		switch name {
+		case "status":
+		case "name", "id_prefix", "queue", "start_time", "end_time", "offset", "children":
+			if len(values) != 1 {
+				return filterState{}, fmt.Errorf("duplicate workflow filter %q", name)
+			}
+		default:
+			return filterState{}, fmt.Errorf("unsupported workflow filter %q", name)
+		}
+	}
+	f := filterState{
+		Name:      q.Get("name"),
+		IDPrefix:  q.Get("id_prefix"),
+		Queue:     q.Get("queue"),
+		StartTime: q.Get("start_time"),
+		EndTime:   q.Get("end_time"),
+	}
+	if values, exists := q["children"]; exists {
+		if values[0] != "true" && values[0] != "false" {
+			return filterState{}, errors.New("children must be true or false")
+		}
+		f.IncludeChildren = values[0] == "true"
+	}
+	if !f.IncludeChildren {
+		no := false
+		f.HasParent = &no
+	}
+	for _, status := range q["status"] {
+		if status != "" {
+			f.Statuses = append(f.Statuses, status)
+		}
+	}
+	var start, end time.Time
+	for name, raw := range map[string]string{"start_time": f.StartTime, "end_time": f.EndTime} {
+		if raw == "" {
+			continue
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return filterState{}, fmt.Errorf("%s must be an RFC3339 timestamp in UTC", name)
+		}
+		_, zone := parsed.Zone()
+		if zone != 0 || parsed.Nanosecond()%int(time.Millisecond) != 0 {
+			return filterState{}, fmt.Errorf("%s must use UTC with at most millisecond precision", name)
+		}
+		if name == "start_time" {
+			start = parsed
+		} else {
+			end = parsed
+		}
+	}
+	if !start.IsZero() && !end.IsZero() && start.After(end) {
+		return filterState{}, errors.New("start_time must be at or before end_time")
+	}
+	if values, exists := q["offset"]; exists && values[0] != "" {
+		offset, err := strconv.Atoi(values[0])
+		if err != nil || offset < 0 {
+			return filterState{}, errors.New("offset must be a nonnegative integer")
+		}
+	}
+	return f, nil
 }
 
-func rowsURL(app string, f filterState, offset int) string {
+func workflowFilterStatuses(f filterState) []string {
+	statuses := append([]string(nil), knownStatuses...)
+	for _, status := range f.statusValues() {
+		found := false
+		for _, known := range statuses {
+			if status == known {
+				found = true
+				break
+			}
+		}
+		if !found {
+			statuses = append(statuses, status)
+		}
+	}
+	return statuses
+}
+
+func workflowFilterQuery(f filterState, offset int) string {
 	v := url.Values{}
-	if f.Status != "" {
-		v.Set("status", f.Status)
+	for _, status := range f.statusValues() {
+		v.Add("status", status)
 	}
 	if f.Name != "" {
 		v.Set("name", f.Name)
@@ -505,8 +658,25 @@ func rowsURL(app string, f filterState, offset int) string {
 	if f.Queue != "" {
 		v.Set("queue", f.Queue)
 	}
+	if f.StartTime != "" {
+		v.Set("start_time", f.StartTime)
+	}
+	if f.EndTime != "" {
+		v.Set("end_time", f.EndTime)
+	}
+	if f.HasParent != nil || f.IncludeChildren {
+		v.Set("children", strconv.FormatBool(f.IncludeChildren))
+	}
 	v.Set("offset", strconv.Itoa(offset))
-	return applicationPath(app) + "/workflows/rows?" + v.Encode()
+	return v.Encode()
+}
+
+func rowsURL(app string, f filterState, offset int) string {
+	return applicationPath(app) + "/workflows/rows?" + workflowFilterQuery(f, offset)
+}
+
+func workflowsURL(app string, f filterState, offset int) string {
+	return applicationPath(app) + "/workflows?" + workflowFilterQuery(f, offset)
 }
 
 func isRunning(status *string) bool {
@@ -545,18 +715,18 @@ func htmlEscape(s string) string {
 }
 
 func workflowsCrumbs(app string) []crumb {
-	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app) + "/workflows"}, {Label: "Workflows"}}
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app)}, {Label: "Workflows"}}
 }
 
 func detailCrumbs(app, id string) []crumb {
 	return []crumb{
 		{Label: "Home", Href: "/"},
-		{Label: app, Href: applicationPath(app) + "/workflows"},
+		{Label: app, Href: applicationPath(app)},
 		{Label: "Workflows", Href: applicationPath(app) + "/workflows"},
 		{Label: id},
 	}
 }
 
 func queuesCrumbs(app string) []crumb {
-	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app) + "/workflows"}, {Label: "Queues"}}
+	return []crumb{{Label: "Home", Href: "/"}, {Label: app, Href: applicationPath(app)}, {Label: "Queues"}}
 }

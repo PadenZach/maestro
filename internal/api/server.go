@@ -15,11 +15,12 @@ import (
 
 // Server wires the HTTP routes onto the hub.
 type Server struct {
-	cfg config.Config
-	hub *hub.Hub
-	log *slog.Logger
-	web *web.Renderer
-	mux *http.ServeMux
+	cfg           config.Config
+	hub           *hub.Hub
+	log           *slog.Logger
+	web           *web.Renderer
+	mux           *http.ServeMux
+	overviewCache overviewCache
 }
 
 // New builds the HTTP server and registers routes. A template parse error is a

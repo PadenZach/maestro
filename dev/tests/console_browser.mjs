@@ -104,6 +104,9 @@ async function fakeExecutor(base, app, state) {
         const b = request.body || {};
         let selected = rows.filter(row => (!b.workflow_name?.length || b.workflow_name.includes(row.WorkflowName))
           && (!b.status?.length || b.status.includes(row.Status))
+          && (b.has_parent === undefined || (row.ParentWorkflowID != null) === b.has_parent)
+          && (!b.start_time || Number(row.CreatedAt) >= Date.parse(b.start_time))
+          && (!b.end_time || Number(row.CreatedAt) <= Date.parse(b.end_time))
           && (!b.workflow_id_prefix?.length || b.workflow_id_prefix.some(prefix => row.WorkflowUUID.startsWith(prefix)))
           && (!b.queue_name?.length || b.queue_name.includes(row.QueueName)));
         response = { output: selected.slice(b.offset || 0, (b.offset || 0) + (b.limit ?? selected.length)) };
@@ -250,7 +253,7 @@ async function refreshDuringInspection(page, base) {
 async function independentBranches(page, base) {
   await page.goto(`${base}/apps/browser/workflows/shared`);
   const rootStep = page.locator('.step-inspection[data-step-workflow="shared"][data-step-id="1"]');
-  const branches = page.locator('#wf-live > div > .timeline > .timeline-rows > .child-branch');
+  const branches = page.locator('#timeline-panel > .timeline > .timeline-rows > .child-branch');
   await rootStep.press('Enter');
   await refreshDetails(page);
   await expectSelection(page, 'shared', 1);
@@ -436,8 +439,38 @@ try {
     await expect(page.locator('#wf-rows tbody tr')).toHaveCount(5);
     await page.getByRole('button', { name: 'Prev' }).click();
     await expect(page.locator('#wf-rows tbody tr')).toHaveCount(25);
-    await page.locator('select[name=status]').selectOption('ERROR');
+    await page.locator('#wf-status summary').press('Enter');
+    await page.locator('input[name=status][value="ERROR"]').check();
     await expect(page.locator('#wf-rows')).toContainText('No workflows match');
+    await page.locator('input[name=status][value="SUCCESS"]').check();
+    await expect(page.locator('#wf-rows tbody tr')).toHaveCount(25);
+    await expect(page.locator('[data-status-label]')).toHaveText('2 statuses');
+    await page.locator('input[name=status][value="SUCCESS"]').press('Escape');
+    await expect(page.locator('#wf-status')).not.toHaveAttribute('open', '');
+    const filterBounds = new URLSearchParams({ name: 'GATE', start_time: '2023-11-14T22:13:19.001Z', end_time: '2023-11-14T22:13:20.999Z', children: 'true' });
+    filterBounds.append('status', 'ERROR'); filterBounds.append('status', 'SUCCESS');
+    await page.goto(`${base}/apps/browser/workflows?${filterBounds}`);
+    await expect(page.locator('#wf-start')).toHaveAttribute('type', 'datetime-local');
+    await expect(page.locator('#wf-start-wire')).toHaveValue('2023-11-14T22:13:19.001Z');
+    await expect(page.locator('#wf-end-wire')).toHaveValue('2023-11-14T22:13:20.999Z');
+    await expect(page.locator('[name=children]')).toBeChecked();
+    await expect(page.locator('#wf-rows tbody tr').first()).toContainText('Nov 14, 2023 22:13:20.000');
+    await expect(page.locator('.breadcrumb').getByRole('link', { name: 'browser', exact: true })).toHaveAttribute('href', '/apps/browser');
+    await page.getByRole('button', { name: 'Next' }).click();
+    await expect(page.locator('#wf-rows tbody tr')).toHaveCount(5);
+    assert.equal(new URL(page.url()).searchParams.get('start_time'), '2023-11-14T22:13:19.001Z', 'untouched picker keeps exact milliseconds');
+    assert.equal(new URL(page.url()).searchParams.get('end_time'), '2023-11-14T22:13:20.999Z');
+    await page.locator('#wf-start').fill('2023-11-14T22:00:00.125');
+    await page.locator('#wf-start').press('Tab');
+    await expect(page.locator('#wf-start-wire')).toHaveValue('2023-11-14T22:00:00.125Z');
+    await expect(page.locator('#wf-rows tbody tr')).toHaveCount(25);
+    await expect.poll(() => new URL(page.url()).searchParams.get('start_time')).toBe('2023-11-14T22:00:00.125Z');
+    assert.deepEqual(new URL(page.url()).searchParams.getAll('status'), ['SUCCESS', 'ERROR'], 'native picker changes preserve every status');
+    if (process.env.CONSOLE_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.CONSOLE_SCREENSHOT_DIR, 'workflow-filters.png') });
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile workflow filters keep the table scroll inside its container');
+    if (process.env.CONSOLE_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.CONSOLE_SCREENSHOT_DIR, 'workflow-filters-mobile.png') });
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     await independentBranches(page, base);
     await delayedInspection(page, base);
@@ -479,7 +512,7 @@ try {
         if (event.detail.target.id === 'wf-live') document.body.dataset.liveSwapped = 'yes';
       });
     });
-    await page.waitForFunction(() => document.body.dataset.liveSwapped === 'yes');
+    await page.waitForFunction(() => document.body.dataset.liveSwapped === 'yes', null, { timeout: 15000 });
     await expect(childStep).toBeVisible();
     await expectSelection(page, 'child', 1);
     await expect(page.locator('body')).toContainText('Workflow relationship cycle');
@@ -492,7 +525,7 @@ try {
     await expect(page.locator('[data-child-status="ERROR"]'), 'failed child retains One Dark red').toHaveCSS('color', 'rgb(224, 108, 117)');
     await page.locator('.step-inspection[data-step-workflow="root"][data-step-id="1"]').press('Enter');
     state.omitRootStep = true;
-    await expect(drawer(page)).toContainText('Step 1 in workflow root is unavailable after refresh.');
+    await expect(drawer(page)).toContainText('Step 1 in workflow root is unavailable after refresh.', { timeout: 15000 });
     await page.keyboard.press('Escape');
     await expect(page.locator('#workflow-view')).toBeFocused();
     state.omitRootStep = false;

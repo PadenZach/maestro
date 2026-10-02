@@ -537,14 +537,14 @@ func TestApplicationLandingLinksToSchedules(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("application landing status = %d: %s", code, body)
 	}
-	match := regexp.MustCompile(`<a class="app-card application-schedules-link" href="([^"]+)"`).FindStringSubmatch(body)
+	match := regexp.MustCompile(`<a class="application-schedules-link" href="([^"]+)"`).FindStringSubmatch(body)
 	if match == nil {
 		t.Fatalf("application landing missing Schedules card: %s", body)
 	}
 	if got, want := html.UnescapeString(match[1]), "/apps/team%2Falpha%20&%20beta/schedules"; got != want {
 		t.Fatalf("Schedules card href = %q, want %q", got, want)
 	}
-	if !strings.Contains(body, "Browse registered schedules and their configuration.") {
-		t.Fatalf("Schedules card lacks bounded read-only description: %s", body)
+	if !strings.Contains(body, `data-panel="schedules"`) {
+		t.Fatalf("Application lacks independent active schedules panel: %s", body)
 	}
 }

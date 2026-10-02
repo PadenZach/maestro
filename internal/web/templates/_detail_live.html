@@ -1,9 +1,10 @@
 {{define "detail_live"}}
 <div id="wf-live-inner"
-     {{if .IsRunning}}hx-get="{{workflowURL .App .WF.WorkflowUUID}}/live" hx-trigger="every 2s" hx-target="#wf-live" hx-swap="innerHTML"{{end}}>
+     {{if .IsRunning}}hx-get="{{workflowURL .App .WF.WorkflowUUID}}/live" hx-trigger="every 10s [!document.hidden &amp;&amp; document.getElementById('timeline-panel').getClientRects().length > 0]" hx-target="#wf-live" hx-swap="innerHTML"{{end}}>
 
   <div class="status-row">
-    <span class="badge {{statusClass (deref .WF.Status)}}">{{derefOr .WF.Status "—"}}</span>
+    <span class="badge" data-initial-class="{{statusClass (deref .WF.Status)}}" data-initial-status="{{derefOr .WF.Status "—"}}" :class="reportedStatusKnown ? reportedStatusClass() : $el.dataset.initialClass" x-text="reportedStatusKnown ? (reportedStatus || 'Unknown status') : $el.dataset.initialStatus">{{derefOr .WF.Status "—"}}</span>
+    <span class="subtle" x-show="view === 'flow' &amp;&amp; reportedStatusStale" x-cloak>Stale status</span>
     {{if .WF.QueueName}}<span class="tag">queue: {{deref .WF.QueueName}}</span>{{end}}
     <span>Application version: {{template "version" (deref .WF.ApplicationVersion)}}</span>
 
@@ -21,6 +22,13 @@
   {{if .Flash}}<div class="flash err">{{.Flash}}</div>{{end}}
 
   {{if .WF.ParentWorkflowID}}<p><a href="{{workflowURL .App (deref .WF.ParentWorkflowID)}}">Parent workflow {{deref .WF.ParentWorkflowID}}</a></p>{{end}}
-  {{template "timeline" .Timeline}}
+  <div class="execution-view-tabs" role="tablist" aria-label="Execution view">
+    <button type="button" id="timeline-tab" role="tab" aria-controls="timeline-panel" :aria-selected="view === 'timeline'" @click="selectView('timeline')" @keydown.right.prevent="selectView('flow'); $el.nextElementSibling.focus()">Timeline</button>
+    <button type="button" id="flow-tab" role="tab" aria-controls="flow-panel" :aria-selected="view === 'flow'" @click="selectView('flow')" @keydown.left.prevent="selectView('timeline'); $el.previousElementSibling.focus()">Flow</button>
+  </div>
+  <div id="timeline-panel" role="tabpanel" aria-labelledby="timeline-tab" x-show="view === 'timeline'">
+    {{if .TimelineError}}<p class="flash err" role="status">{{.TimelineError}}</p>{{end}}
+    {{template "timeline" .Timeline}}
+  </div>
 </div>
 {{end}}

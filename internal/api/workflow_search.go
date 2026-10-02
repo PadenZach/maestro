@@ -27,9 +27,9 @@ func (s *Server) fetchConsoleRows(ctx context.Context, app string, f filterState
 	candidateLimit := defaultPageSize + 1
 	candidateOffset := 0
 	body := protocol.ListWorkflowsBody{SortDesc: true, Limit: &candidateLimit, Offset: &candidateOffset}
-	if f.Status != "" {
-		body.Status = []string{f.Status}
-	}
+	body.Status = f.statusValues()
+	body.StartTime, body.EndTime = f.StartTime, f.EndTime
+	body.HasParent = f.HasParent
 	if f.Queue != "" {
 		body.QueueName = []string{f.Queue}
 	}

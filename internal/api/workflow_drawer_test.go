@@ -1,7 +1,9 @@
 package api_test
 
 import (
+	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/zpaden/maestro/internal/protocol"
@@ -52,5 +54,76 @@ func TestWorkflowDrawerReadsSelectedWorkflowAndStep(t *testing.T) {
 				t.Errorf("%s missing %q", tc.path, want)
 			}
 		}
+	}
+}
+
+func TestWorkflowDrawerUsesBoundedPageHint(t *testing.T) {
+	ts, h := newTestServer(t)
+	var calls atomic.Int32
+	dialFake(t, ts, "app", "testkey", "exec", map[protocol.MessageType]respondFn{
+		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+			return map[string]any{"output": sampleWorkflow("root", "SUCCESS")}
+		},
+		protocol.MsgListSteps: func(req map[string]any) map[string]any {
+			calls.Add(1)
+			if req["limit"] != float64(50) || req["offset"] != float64(50) || req["load_output"] != true {
+				t.Errorf("step page = %v", req)
+			}
+			return map[string]any{"output": []map[string]any{{"function_id": 900, "function_name": "hinted-step", "error": nil}}}
+		},
+	})
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	_, body := getBody(t, ts.URL+"/apps/app/workflows/root/inspect?step=900&offset=50")
+	if !strings.Contains(body, "hinted-step") || calls.Load() != 1 {
+		t.Fatalf("hinted drawer = %s; calls=%d", body, calls.Load())
+	}
+	_, body = getBody(t, ts.URL+"/apps/app/workflows/root/inspect?step=901&offset=50")
+	if !strings.Contains(body, "unavailable after refresh") || calls.Load() != 2 {
+		t.Fatalf("missing hinted record = %s; calls=%d", body, calls.Load())
+	}
+	_, body = getBody(t, ts.URL+"/apps/app/workflows/root/inspect?step=900&offset=1")
+	if !strings.Contains(body, "offset must") || calls.Load() != 2 {
+		t.Fatalf("invalid page hint = %s", body)
+	}
+}
+
+func TestWorkflowDrawerBoundsLegacyScan(t *testing.T) {
+	ts, h := newTestServer(t)
+	var calls atomic.Int32
+	dialFake(t, ts, "app", "testkey", "exec", map[protocol.MessageType]respondFn{
+		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+			return map[string]any{"output": sampleWorkflow("root", "SUCCESS")}
+		},
+		protocol.MsgListSteps: func(req map[string]any) map[string]any {
+			page := calls.Add(1) - 1
+			if req["limit"] != float64(50) || req["offset"] != float64(page*50) {
+				t.Errorf("legacy page = %v", req)
+			}
+			steps := []map[string]any{}
+			for i := 0; i < 50; i++ {
+				steps = append(steps, map[string]any{"function_id": int(page)*50 + i, "function_name": fmt.Sprintf("step-%d", i)})
+			}
+			return map[string]any{"output": steps}
+		},
+	})
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	_, body := getBody(t, ts.URL+"/apps/app/workflows/root/inspect?step=9999")
+	if calls.Load() != 20 || !strings.Contains(body, "bounded inspection read") {
+		t.Fatalf("unbounded legacy lookup: calls=%d; body=%s", calls.Load(), body)
+	}
+}
+
+func TestWorkflowDrawerDoesNotInventStepsFromNullData(t *testing.T) {
+	ts, h := newTestServer(t)
+	dialFake(t, ts, "app", "testkey", "exec", map[protocol.MessageType]respondFn{
+		protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+			return map[string]any{"output": sampleWorkflow("root", "SUCCESS")}
+		},
+		protocol.MsgListSteps: func(map[string]any) map[string]any { return map[string]any{"output": nil} },
+	})
+	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	_, body := getBody(t, ts.URL+"/apps/app/workflows/root/inspect?step=0&offset=0")
+	if !strings.Contains(body, "executor step data unavailable") || strings.Contains(body, "unavailable after refresh") {
+		t.Fatalf("null steps misclassified: %s", body)
 	}
 }

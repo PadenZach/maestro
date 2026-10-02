@@ -1,0 +1,37 @@
+{{define "application_panel"}}
+<div class="overview-result" data-loaded="{{.Loaded}}" data-app-available="{{.Available}}" data-connected="{{.Connected}}" data-error="{{.Error}}" data-last-success="{{.LastSuccess}}">
+  <div class="overview-panel-head"><h2>{{if eq .Kind "activity"}}Workflow activity{{else if eq .Kind "workload"}}Current workload{{else if eq .Kind "recent"}}Recent workflows{{else}}Active schedules{{end}}</h2><span class="overview-freshness subtle" role="status">{{if .Loaded}}{{if .Stale}}Stale · {{end}}Last successful refresh <time datetime="{{.LastSuccess}}">{{.LastSuccess}}</time>{{else}}Data unavailable{{end}}</span></div>
+  <div class="overview-error" role="status" {{if not .Error}}hidden{{end}}>{{.Error}}{{if .Stale}} · Showing retained data.{{end}}</div>
+  {{if .Loaded}}
+  {{if eq .Kind "activity"}}
+  <p class="subtle">Workflows created during this period, grouped by current status.</p>
+  <p class="overview-window mono subtle">{{.Activity.Start}} to {{.Activity.End}} · UTC</p>
+  <div class="overview-counts">
+    <a class="overview-count" href="{{.Activity.URL}}"><strong>{{.Activity.Total}}</strong><span>Created</span></a>
+    {{range .Activity.Counts}}<div class="overview-count {{.Key}}">{{if .URL}}<a href="{{.URL}}"><strong>{{.Count}}</strong><span>{{.Label}}</span></a>{{else}}<strong>{{.Count}}</strong><span>{{.Label}}</span>{{end}}</div>{{end}}
+  </div>
+  {{if .Activity.Total}}
+  <div class="overview-chart" aria-label="Workflow activity by creation time. Peak bucket: {{.Activity.Peak}} executions.">
+    {{range .Activity.Buckets}}<div class="overview-bar" aria-label="{{.Label}} UTC: {{.Count}} executions">
+      {{$bucket := .}}{{range .Segments}}{{if .URL}}<a class="overview-segment {{.Key}}" style="height:{{.Height}}" href="{{.URL}}" title="{{.Label}}: {{.Count}} · {{$bucket.Start}} to {{$bucket.End}} UTC" aria-label="{{.Label}}: {{.Count}} workflows from {{$bucket.Start}} to {{$bucket.End}}">{{.Count}}</a>{{else}}<span class="overview-segment {{.Key}}" style="height:{{.Height}}" title="{{.Label}}: {{.Count}}; missing status cannot be filtered exactly">{{.Count}}</span>{{end}}{{end}}
+    </div>{{end}}
+  </div>
+  <div class="overview-chart-axis subtle"><span>{{(index .Activity.Buckets 0).Label}} UTC</span><span>Peak bucket {{.Activity.Peak}}</span><span>{{.Activity.End}}</span></div>
+  {{else}}<div class="empty">No workflows were created during this period.</div>{{end}}
+  {{if .Activity.MissingStatus}}<p class="subtle">Other / unknown includes missing statuses. These records cannot be filtered exactly.</p>{{end}}
+  {{else if eq .Kind "workload"}}
+  <p class="subtle">Unfinished executions across all creation dates.</p>
+  <div class="overview-counts"><a class="overview-count" href="{{.Workload.URL}}"><strong>{{.Workload.Total}}</strong><span>Unfinished</span></a>{{range .Workload.Counts}}<a class="overview-count" href="{{.URL}}"><strong>{{.Count}}</strong><span>{{.Label}}</span></a>{{end}}</div>
+  <p><a class="link" href="{{.Workload.QueuedURL}}">{{.Workload.Queued}} enqueued or delayed</a><span class="subtle"> · Subset of unfinished work</span></p>
+  {{if .Workload.Queues}}<div class="overview-table-wrap"><table class="data-table"><thead><tr><th>Queue</th><th>Pending</th><th>Enqueued</th><th>Delayed</th></tr></thead><tbody>{{range .Workload.Queues}}<tr><td>{{if .DetailsURL}}<a class="link" href="{{.DetailsURL}}">{{.Name}}</a>{{else}}{{.Name}}{{end}} {{if .URL}}<a class="link" href="{{.URL}}">{{.Total}} unfinished</a>{{else}}{{.Total}} unfinished{{end}}</td><td>{{.Pending}}</td><td>{{.Enqueued}}</td><td>{{.Delayed}}</td></tr>{{end}}</tbody></table></div>{{else}}<div class="empty">No unfinished workflows assigned to queues.</div>{{end}}
+  {{else if eq .Kind "schedules"}}
+  <a class="overview-schedule-count" href="{{.SchedulesURL}}"><strong>{{.ScheduleCount}}</strong><span>Active schedules</span></a>
+  {{else if eq .Kind "recent"}}
+  <p class="subtle">Ten most recent executions created in the selected period.</p><p class="overview-window mono subtle">{{.Window.Start}} to {{.Window.End}} · UTC</p>
+  <div class="overview-table-wrap"><table class="data-table"><thead><tr><th>Status</th><th>Name</th><th>Created (UTC)</th><th>Workflow ID</th></tr></thead><tbody>
+  {{range .Recent}}<tr><td><span class="badge {{statusClass (deref .Status)}}">{{derefOr .Status "Unknown"}}</span></td><td>{{derefOr .WorkflowName "—"}}</td><td class="mono subtle">{{.CreatedUTC}}</td><td class="mono"><a class="link" href="{{workflowURL $.App .WorkflowUUID}}">{{.WorkflowUUID}}</a></td></tr>{{else}}<tr><td class="empty-row" colspan="4">No workflows were created during this period.</td></tr>{{end}}
+  </tbody></table></div>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

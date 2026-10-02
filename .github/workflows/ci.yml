@@ -44,6 +44,7 @@ jobs:
       - run: mise run scan
 
   sdk:
+    name: SDK ${{ matrix.dbos == '2' && '2.31.x' || '3.x' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:

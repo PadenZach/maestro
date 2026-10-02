@@ -38,7 +38,7 @@ func queueDetailURL(app, name string) string {
 }
 
 func queuedWorkflowsURL(app, name string) string {
-	query := url.Values{"queue": []string{name}}
+	query := url.Values{"queue": []string{name}, "children": []string{"true"}}
 	return "/apps/" + url.PathEscape(app) + "/workflows?" + query.Encode()
 }
 
@@ -87,7 +87,7 @@ func queueDetailCrumbs(app, name string) []crumb {
 	appPath := "/apps/" + url.PathEscape(app)
 	return []crumb{
 		{Label: "Home", Href: "/"},
-		{Label: app, Href: appPath + "/workflows"},
+		{Label: app, Href: appPath},
 		{Label: "Queues", Href: appPath + "/queues"},
 		{Label: name},
 	}
