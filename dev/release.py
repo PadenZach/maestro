@@ -6,7 +6,6 @@ Candidates are retained by commit so retries use the same image bytes.
 """
 
 import argparse
-from datetime import datetime, timezone
 import gzip
 import hashlib
 import io
@@ -18,10 +17,9 @@ import subprocess
 import tarfile
 import tempfile
 from urllib.parse import quote
-import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PLATFORMS = [(system, arch) for system in ("linux", "darwin", "windows") for arch in ("amd64", "arm64")]
+PLATFORMS = [(system, arch) for system in ("linux", "darwin") for arch in ("amd64", "arm64")]
 
 
 def run(*args, **kwargs):
@@ -147,30 +145,18 @@ def api(path, *args):
 
 
 def archive_name(current, system, arch):
-    extension = "zip" if system == "windows" else "tar.gz"
-    return f"maestro_{current}_{system}_{arch}.{extension}"
+    return f"maestro_{current}_{system}_{arch}.tar.gz"
 
 
-def write_archive(destination, binary, license_file, system, epoch):
+def write_archive(destination, binary, license_file, epoch):
     """One executable at the archive root, with stable metadata for retries."""
-    executable = "maestro.exe" if system == "windows" else "maestro"
-    files = [(executable, binary.read_bytes(), 0o755), ("LICENSE", license_file.read_bytes(), 0o644)]
-    if system == "windows":
-        timestamp = datetime.fromtimestamp(epoch, timezone.utc).timetuple()[:6]
-        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    files = [("maestro", binary.read_bytes(), 0o755), ("LICENSE", license_file.read_bytes(), 0o644)]
+    with destination.open("wb") as stream, gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=epoch) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w") as archive:
             for name, content, mode in files:
-                info = zipfile.ZipInfo(name, timestamp)
-                info.create_system = 3
-                info.external_attr = (0o100000 | mode) << 16
-                info.compress_type = zipfile.ZIP_DEFLATED
-                archive.writestr(info, content)
-    else:
-        with destination.open("wb") as stream, gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=epoch) as compressed:
-            with tarfile.open(fileobj=compressed, mode="w") as archive:
-                for name, content, mode in files:
-                    info = tarfile.TarInfo(name)
-                    info.size, info.mode, info.mtime = len(content), mode, epoch
-                    archive.addfile(info, io.BytesIO(content))
+                info = tarfile.TarInfo(name)
+                info.size, info.mode, info.mtime = len(content), mode, epoch
+                archive.addfile(info, io.BytesIO(content))
 
 
 def verify_binary(binary, system, arch, revision):
@@ -200,7 +186,7 @@ def build_assets(repository, digest, current, revision):
     assets = []
     with tempfile.TemporaryDirectory(prefix="maestro-binaries-") as scratch:
         for system, arch in PLATFORMS:
-            binary = Path(scratch) / ("maestro.exe" if system == "windows" else "maestro")
+            binary = Path(scratch) / "maestro"
             if system == "linux":
                 # Extract the bytes already scanned and tested in CI; never rebuild the image.
                 # Separate manifest digests also work with Docker's classic image store.
@@ -219,7 +205,7 @@ def build_assets(repository, digest, current, revision):
                     env=dict(os.environ, CGO_ENABLED="0", GOOS=system, GOARCH=arch))
             verify_binary(binary, system, arch, revision)
             archive = destination / archive_name(current, system, arch)
-            write_archive(archive, binary, ROOT / "LICENSE", system, epoch)
+            write_archive(archive, binary, ROOT / "LICENSE", epoch)
             assets.append(archive)
     checksums = destination / "checksums.txt"
     checksums.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in assets))
@@ -236,7 +222,7 @@ def release_notes(project, repository, current):
         "## Binaries", "", "| Platform | Download |", "| --- | --- |",
     ]
     for system, arch in PLATFORMS:
-        label = {"linux": "Linux", "darwin": "macOS", "windows": "Windows"}[system]
+        label = {"linux": "Linux", "darwin": "macOS"}[system]
         filename = archive_name(current, system, arch)
         lines.append(f"| {label} {arch} | [{filename}]({download_url}/{filename}) |")
     lines.extend([

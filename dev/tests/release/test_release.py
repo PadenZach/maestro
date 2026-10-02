@@ -10,7 +10,6 @@ import tempfile
 import tarfile
 import unittest
 from unittest.mock import patch
-import zipfile
 
 SPEC = importlib.util.spec_from_file_location("release", Path(__file__).resolve().parents[2] / "release.py")
 release = importlib.util.module_from_spec(SPEC)
@@ -151,19 +150,14 @@ class ReleaseTests(unittest.TestCase):
             license_file.write_text("MIT License")
             for system, arch in release.PLATFORMS:
                 archive = root / release.archive_name("0.2.0", system, arch)
-                release.write_archive(archive, binary, license_file, system, 1750000000)
+                release.write_archive(archive, binary, license_file, 1750000000)
                 first = archive.read_bytes()
-                release.write_archive(archive, binary, license_file, system, 1750000000)
+                release.write_archive(archive, binary, license_file, 1750000000)
                 self.assertEqual(first, archive.read_bytes())
-                if system == "windows":
-                    with zipfile.ZipFile(archive) as contents:
-                        self.assertEqual(contents.namelist(), ["maestro.exe", "LICENSE"])
-                        self.assertEqual(contents.read("maestro.exe"), binary.read_bytes())
-                else:
-                    with tarfile.open(archive) as contents:
-                        self.assertEqual(contents.getnames(), ["maestro", "LICENSE"])
-                        self.assertEqual(contents.getmember("maestro").mode, 0o755)
-                        self.assertEqual(contents.extractfile("maestro").read(), binary.read_bytes())
+                with tarfile.open(archive) as contents:
+                    self.assertEqual(contents.getnames(), ["maestro", "LICENSE"])
+                    self.assertEqual(contents.getmember("maestro").mode, 0o755)
+                    self.assertEqual(contents.extractfile("maestro").read(), binary.read_bytes())
 
     def test_binary_identity_checks_platform_and_embedded_revision(self):
         with tempfile.TemporaryDirectory() as scratch:

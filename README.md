@@ -5,7 +5,7 @@ JSON API.
 
 ## Install
 
-Download Linux, macOS, or Windows binaries from the
+Download Linux or macOS binaries from the
 [releases page](https://github.com/PadenZach/maestro/releases), or install with
 [mise's GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
 
@@ -14,7 +14,7 @@ mise use -g github:PadenZach/maestro@0.2.0
 maestro --help
 ```
 
-Archives contain `maestro` (`maestro.exe` on Windows) at their root. Each release
+Archives contain `maestro` at their root. Each release
 also includes SHA-256 checksums in `checksums.txt`. Mise selects the platform
 automatically.
 Private repository access requires a GitHub token with access to this repository.
@@ -55,9 +55,9 @@ The release version lives in [`VERSION`](VERSION). To release:
    container image, creates the matching Git tag (for example `v0.1.1`), and
    publishes a GitHub Release. Tags are created automatically.
 
-Each release includes binaries for Linux, macOS, and Windows (amd64 and arm64),
+Each release includes binaries for Linux and macOS (amd64 and arm64),
 checksums, download links, and the tagged OCI image. Linux binaries are extracted
-from the tested image; macOS and Windows binaries are built from the same commit.
+from the tested image; macOS binaries are built from the same commit.
 CI verifies installation through mise's GitHub backend. Prerelease versions are
 marked as prereleases on GitHub.
 Ordinary pushes to `main` publish images tagged `sha-<full-commit-id>`. SDK tests
