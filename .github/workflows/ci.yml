@@ -44,6 +44,7 @@ jobs:
       - run: mise run scan
 
   sdk:
+    if: github.ref == 'refs/heads/main'
     name: SDK ${{ matrix.dbos == '2' && '2.31.x' || '3.x' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -67,6 +68,7 @@ jobs:
           if-no-files-found: error
 
   image:
+    if: github.ref == 'refs/heads/main'
     needs: [version, checks, sdk]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -146,7 +148,7 @@ jobs:
   publish:
     needs: [version, candidate, candidate-test]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     # Serialize reruns or competing commits for the same version.
     concurrency:
       group: publish-${{ needs.version.outputs.release == 'true' && needs.version.outputs.version || github.sha }}
@@ -163,17 +165,20 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        if: needs.version.outputs.release == 'true'
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.version.outputs.release == 'true'
-        with:
-          pattern: sdk-*-versions
-          path: dist
-          merge-multiple: true
       - name: Promote tested image and publish version bump
         run: python3 -B dev/release.py publish
+      - name: Verify installation through the mise GitHub backend
+        if: needs.version.outputs.release == 'true'
+        working-directory: ${{ runner.temp }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+        run: mise exec "github:${GITHUB_REPOSITORY}@${RELEASE_VERSION}" -- maestro --help

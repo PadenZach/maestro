@@ -3,6 +3,29 @@
 Maestro is a Go service for inspecting DBOS workflows through a web console and
 JSON API.
 
+## Install
+
+Download Linux, macOS, or Windows binaries from the
+[releases page](https://github.com/PadenZach/maestro/releases), or install with
+[mise's GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
+
+```sh
+mise use -g github:PadenZach/maestro@0.2.0
+maestro --help
+```
+
+Archives contain `maestro` (`maestro.exe` on Windows) at their root. Each release
+also includes SHA-256 checksums in `checksums.txt`. Mise selects the platform
+automatically.
+Private repository access requires a GitHub token with access to this repository.
+
+The [tagged OCI image](https://github.com/PadenZach/maestro/pkgs/container/maestro?tag=0.2.0)
+supports Linux amd64 and arm64:
+
+```sh
+docker pull ghcr.io/padenzach/maestro:0.2.0
+```
+
 ## Local development
 
 With mise installed, install the configured tools and start the server:
@@ -32,11 +55,15 @@ The release version lives in [`VERSION`](VERSION). To release:
    container image, creates the matching Git tag (for example `v0.1.1`), and
    publishes a GitHub Release. Tags are created automatically.
 
-The release includes generated notes, the immutable image digest, and the tested
-DBOS SDK versions. Prerelease versions are marked as prereleases on GitHub.
-Ordinary pushes to `main` publish images tagged `sha-<full-commit-id>`; pull
-requests only run checks. Images use explicit version or commit tags rather than
-a moving `latest` tag.
+Each release includes binaries for Linux, macOS, and Windows (amd64 and arm64),
+checksums, download links, and the tagged OCI image. Linux binaries are extracted
+from the tested image; macOS and Windows binaries are built from the same commit.
+CI verifies installation through mise's GitHub backend. Prerelease versions are
+marked as prereleases on GitHub.
+Ordinary pushes to `main` publish images tagged `sha-<full-commit-id>`. SDK tests
+and image builds run only on `main`. Pull requests and manual runs on other
+branches run version validation, code checks, and dependency scans. Images use
+explicit version or commit tags rather than a moving `latest` tag.
 
 To retry a failed release, rerun its original CI run in GitHub Actions. Retries
 reuse the candidate image and refuse to overwrite existing tags with different

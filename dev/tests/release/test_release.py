@@ -1,12 +1,15 @@
 """Guard release boundaries without touching GitHub or a container registry."""
 
 import importlib.util
+import hashlib
 import os
 from pathlib import Path
 import subprocess
 import tempfile
+import tarfile
 import unittest
 from unittest.mock import patch
+import zipfile
 
 SPEC = importlib.util.spec_from_file_location("release", Path(__file__).resolve().parents[2] / "release.py")
 release = importlib.util.module_from_spec(SPEC)
@@ -102,33 +105,31 @@ class ReleaseTests(unittest.TestCase):
                "RELEASE": "true", "GITHUB_REPOSITORY": "example/app"}
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
-            (root / "dist").mkdir()
-            for major in (2, 3):
-                (root / "dist" / f"sdk-{major}.json").write_text("{}")
             with patch.object(release, "ROOT", root), patch.dict(os.environ, env, clear=True), \
                     patch.object(release, "output", return_value=REVISION), \
                     patch.object(release, "version", return_value="0.1.0"), \
                     patch.object(release, "tag_commit", return_value=REVISION), \
                     patch.object(release, "api", return_value=[[{"tag_name": "v0.1.0", "draft": True}]]), \
+                    patch.object(release, "build_assets", return_value=[root / "maestro_0.1.0_linux_amd64.tar.gz", root / "checksums.txt"]), \
+                    patch.object(release, "finalize_release") as finalize, \
                     patch.object(release, "promote"), patch.object(release, "run") as run:
                 release.publish()
-                self.assertEqual([call.args[:3] for call in run.call_args_list], [
-                    ("gh", "release", "upload"), ("gh", "release", "edit"),
-                ])
+                self.assertEqual(run.call_args.args[:4], ("gh", "release", "upload", "v0.1.0"))
+                self.assertFalse(any(str(arg).endswith(".json") for arg in run.call_args.args))
+                finalize.assert_called_once_with("example/app", "v0.1.0", "0.1.0")
 
     def test_new_prerelease_targets_the_exact_commit(self):
         env = {"IMAGE_REPOSITORY": "ghcr.io/example/app", "IMAGE_DIGEST": DIGEST,
                "RELEASE": "true", "GITHUB_REPOSITORY": "example/app"}
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
-            (root / "dist").mkdir()
-            for major in (2, 3):
-                (root / "dist" / f"sdk-{major}.json").write_text("{}")
             with patch.object(release, "ROOT", root), patch.dict(os.environ, env, clear=True), \
                     patch.object(release, "output", return_value=REVISION), \
                     patch.object(release, "version", return_value="0.2.0-rc.1"), \
                     patch.object(release, "tag_commit", return_value=None), \
                     patch.object(release, "api", side_effect=[[[]], {}]) as api, \
+                    patch.object(release, "build_assets", return_value=[root / "checksums.txt"]), \
+                    patch.object(release, "finalize_release"), \
                     patch.object(release, "promote"), patch.object(release, "run") as run:
                 release.publish()
                 self.assertIn(f"sha={REVISION}", api.call_args.args)
@@ -138,8 +139,76 @@ class ReleaseTests(unittest.TestCase):
                 self.assertIn("--prerelease", create)
                 self.assertIn("--verify-tag", create)
                 self.assertEqual([call.args[:3] for call in run.call_args_list], [
-                    ("gh", "release", "create"), ("gh", "release", "upload"), ("gh", "release", "edit"),
+                    ("gh", "release", "create"), ("gh", "release", "upload"),
                 ])
+
+    def test_archives_have_executable_at_root_and_are_repeatable(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            binary, license_file = root / "binary", root / "license"
+            binary.write_bytes(b"executable bytes")
+            license_file.write_text("MIT License")
+            for system, arch in release.PLATFORMS:
+                archive = root / release.archive_name("0.2.0", system, arch)
+                release.write_archive(archive, binary, license_file, system, 1750000000)
+                first = archive.read_bytes()
+                release.write_archive(archive, binary, license_file, system, 1750000000)
+                self.assertEqual(first, archive.read_bytes())
+                if system == "windows":
+                    with zipfile.ZipFile(archive) as contents:
+                        self.assertEqual(contents.namelist(), ["maestro.exe", "LICENSE"])
+                        self.assertEqual(contents.read("maestro.exe"), binary.read_bytes())
+                else:
+                    with tarfile.open(archive) as contents:
+                        self.assertEqual(contents.getnames(), ["maestro", "LICENSE"])
+                        self.assertEqual(contents.getmember("maestro").mode, 0o755)
+                        self.assertEqual(contents.extractfile("maestro").read(), binary.read_bytes())
+
+    def test_binary_identity_checks_platform_and_embedded_revision(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            binary = Path(scratch) / "maestro"
+            binary.write_bytes(b"executable bytes\x00" + REVISION.encode() + b"\x00")
+            with patch.object(release, "output", return_value="GOOS=linux\nGOARCH=amd64\nCGO_ENABLED=0\n"):
+                release.verify_binary(binary, "linux", "amd64", REVISION)
+                with self.assertRaisesRegex(ValueError, "missing GOARCH=arm64"):
+                    release.verify_binary(binary, "linux", "arm64", REVISION)
+                with self.assertRaisesRegex(ValueError, "missing revision"):
+                    release.verify_binary(binary, "linux", "amd64", "c" * 40)
+
+    def test_notes_link_every_download_and_the_tagged_image(self):
+        notes = release.release_notes("example/app", "ghcr.io/example/app", "0.2.0")
+        for system, arch in release.PLATFORMS:
+            self.assertIn("/releases/download/v0.2.0/" + release.archive_name("0.2.0", system, arch), notes)
+        self.assertIn("/pkgs/container/app?tag=0.2.0", notes)
+        self.assertIn("docker pull ghcr.io/example/app:0.2.0", notes)
+        self.assertIn("mise use -g github:example/app@0.2.0", notes)
+        self.assertNotIn(".json", notes)
+
+    def test_repair_verifies_uploads_before_removing_old_jsons(self):
+        env = {"IMAGE_REPOSITORY": "ghcr.io/example/app", "GITHUB_REPOSITORY": "example/app", "RELEASE_TAG": "v0.2.0"}
+        with tempfile.TemporaryDirectory() as scratch:
+            asset = Path(scratch) / "maestro_0.2.0_linux_amd64.tar.gz"
+            asset.write_bytes(b"binary archive")
+            existing = {"draft": False, "immutable": False, "assets": [{"name": "release.json", "id": 123}]}
+            uploaded = {"assets": [{"name": asset.name, "digest": "sha256:" + hashlib.sha256(asset.read_bytes()).hexdigest()}]}
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(release, "version", return_value="0.2.0"), \
+                    patch.object(release, "output", return_value=REVISION), \
+                    patch.object(release, "tag_commit", return_value=REVISION), \
+                    patch.object(release, "image_digest", return_value=DIGEST), \
+                    patch.object(release, "build_assets", return_value=[asset]), \
+                    patch.object(release, "finalize_release"), \
+                    patch.object(release, "api", side_effect=[existing, uploaded, None]) as api, \
+                    patch.object(release, "run") as run:
+                release.repair()
+                self.assertEqual(run.call_args_list[0].args, ("gh", "release", "upload", "v0.2.0", str(asset)))
+                self.assertEqual(api.call_args.args, ("repos/example/app/releases/assets/123", "--method", "DELETE"))
+                uploaded["assets"][0]["digest"] = "sha256:" + "0" * 64
+                api.reset_mock(side_effect=True)
+                api.side_effect = [existing, uploaded]
+                with self.assertRaisesRegex(ValueError, "checksum verification"):
+                    release.repair()
+                self.assertEqual(api.call_count, 2)
 
 
 if __name__ == "__main__":
