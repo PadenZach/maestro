@@ -118,6 +118,19 @@ class ReleaseTests(unittest.TestCase):
                 self.assertFalse(any(str(arg).endswith(".json") for arg in run.call_args.args))
                 finalize.assert_called_once_with("example/app", "v0.1.0", "0.1.0")
 
+    def test_finalize_finds_draft_release_before_publishing_by_id(self):
+        with patch.object(release, "output", return_value='{"databaseId": 42}') as output, \
+                patch.object(release, "api") as api:
+            release.finalize_release("example/app", "v0.3.0", "0.3.0")
+            output.assert_called_once_with(
+                "gh", "release", "view", "v0.3.0", "--repo", "example/app",
+                "--json", "databaseId",
+            )
+            api.assert_called_once_with(
+                "repos/example/app/releases/42", "--method", "PATCH",
+                "-F", "draft=false", "-f", "make_latest=legacy",
+            )
+
     def test_new_prerelease_targets_the_exact_commit(self):
         env = {"IMAGE_REPOSITORY": "ghcr.io/example/app", "IMAGE_DIGEST": DIGEST,
                "RELEASE": "true", "GITHUB_REPOSITORY": "example/app"}

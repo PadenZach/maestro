@@ -236,8 +236,10 @@ def release_notes(project, repository, current):
 
 
 def finalize_release(project, tag, current):
-    release = api(f"repos/{project}/releases/tags/{tag}")
-    api(f"repos/{project}/releases/{release['id']}", "--method", "PATCH", "-F", "draft=false",
+    # The tag endpoint does not return drafts; gh resolves those through the release list.
+    release = json.loads(output("gh", "release", "view", tag, "--repo", project,
+                                "--json", "databaseId"))
+    api(f"repos/{project}/releases/{release['databaseId']}", "--method", "PATCH", "-F", "draft=false",
         "-f", f"make_latest={'false' if '-' in current else 'legacy'}")
 
 
