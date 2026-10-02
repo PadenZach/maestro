@@ -252,6 +252,7 @@ __marimo__/
 
 # Local documentation, agent files, and generated project files.
 *.md
+!/README.md
 !/internal/web/THIRD_PARTY.md
 /.pi/
 /.planning/
