@@ -60,6 +60,8 @@ jobs:
           persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Install image conversion tools
+        run: sudo apt-get update && sudo apt-get install -y skopeo jq
       - run: mise run build
       - run: mise run image:test
       - name: Publish image to GHCR

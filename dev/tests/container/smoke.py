@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
@@ -13,10 +12,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(ROOT / "dev"))
-from oci import load_image, output, run  # noqa: E402 - explicit repository helper path
-
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def run(*args, **kwargs):
+    return subprocess.run(args, check=True, text=True, cwd=ROOT, **kwargs)
+
+
+def output(*args):
+    return run(*args, capture_output=True).stdout.strip()
 
 
 @contextmanager
@@ -67,7 +71,12 @@ def main():
     native = output("docker", "version", "--format", "{{.Server.Arch}}")
     for arch in ("amd64", "arm64") if args.all_platforms else (native,):
         tag = f"maestro:test-{arch}"
-        load_image(arch, tag)
+        run(
+            "mise",
+            "run",
+            "image:load",
+            env=dict(os.environ, IMAGE_ARCH=arch, IMAGE_LOCAL_TAG=tag),
+        )
         with tempfile.TemporaryDirectory(prefix="maestro-container-") as scratch:
             probe = Path(scratch) / "probe"
             run(

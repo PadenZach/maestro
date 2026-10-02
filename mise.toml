@@ -15,7 +15,7 @@ description = "Format Go source"
 run = "gofmt -w cmd internal docs/reference dev/tests/container"
 
 [tasks.check]
-description = "Check formatting, build, vet, Staticcheck and run all local tests"
+description = "Check formatting, build, vet, Staticcheck and run Go tests"
 run = [
   '''
 set -eu
@@ -29,24 +29,83 @@ fi
   "go vet ./...",
   "go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 ./...",
   "go test -race -count=1 ./...",
-  "python3 -B -m unittest discover -s dev/tests/tooling -v",
-  "python3 -B -I -S -m unittest discover -s dev/tests -p test_maestro_connection.py -v",
-  "python3 -B -I -S -m unittest discover -s dev/tests/acceptance -p 'test_*.py' -v",
 ]
 
 [tasks.build]
-description = "Build and scan both Linux platforms, then load maestro:local into Docker"
-run = "python3 -B dev/oci.py build"
+description = "Build both Linux platforms with CycloneDX SBOMs and provenance, scan and load locally"
+# Requires Docker Buildx, skopeo and jq (brew install skopeo jq / apt-get install skopeo jq).
+shell = "bash -euo pipefail -c"
+run = '''
+command -v skopeo >/dev/null
+command -v jq >/dev/null
+revision="$(git rev-parse HEAD)"
+version="${VERSION:-$(git describe --tags --always --dirty)}"
+[[ "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo 'Invalid VERSION' >&2; exit 1; }
+builder="${BUILDX_BUILDER:-maestro-build}"
+if [[ -z "${BUILDX_BUILDER:-}" ]] && ! docker buildx inspect "$builder" >/dev/null 2>&1; then
+  docker buildx create --name "$builder" --driver docker-container
+fi
+mkdir -p dist
+rm -rf dist/oci
+rm -f dist/maestro-amd64.tar dist/maestro-arm64.tar
+docker buildx build --builder "$builder" --platform linux/amd64,linux/arm64 \
+  --build-arg "VERSION=$version" --build-arg "REVISION=$revision" \
+  --build-arg "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg "SOURCE=${IMAGE_SOURCE:-https://github.com/zpaden/maestro}" \
+  --provenance=mode=min --metadata-file dist/image-metadata.json \
+  --output type=oci,dest=dist/oci,tar=false .
+digest="$(jq -er '."containerimage.digest"' dist/image-metadata.json)"
+oras tag --oci-layout "dist/oci@$digest" maestro
+for arch in amd64 arm64; do
+  skopeo --override-os linux --override-arch "$arch" copy \
+    oci:dist/oci:maestro "docker-archive:dist/maestro-$arch.tar:maestro:build-$arch"
+  trivy image --input "dist/maestro-$arch.tar" --format cyclonedx \
+    --output "dist/sbom-$arch.cdx.json"
+  trivy sbom --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 \
+    "dist/sbom-$arch.cdx.json"
+  oras attach --oci-layout --artifact-type application/vnd.cyclonedx+json \
+    "dist/oci@$digest" "dist/sbom-$arch.cdx.json:application/vnd.cyclonedx+json"
+done
+touch dist/oci/.scanned
+mise run image:load
+'''
 tools = { trivy = "0.74.0", oras = "1.3.4" }
 
 [tasks."image:publish"]
-description = "Publish the scanned multi-platform image to GHCR"
-run = "python3 -B dev/oci.py publish"
+description = "Publish the scanned image, CycloneDX SBOMs and in-toto provenance to GHCR"
+shell = "bash -euo pipefail -c"
+run = '''
+test -f dist/oci/.scanned || { echo 'Run mise run build first' >&2; exit 1; }
+repository="$(printf '%s' "${GHCR_IMAGE:-ghcr.io/${GITHUB_REPOSITORY:-}}" | tr '[:upper:]' '[:lower:]')"
+[[ "$repository" =~ ^ghcr\.io/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._/-]*$ ]] || {
+  echo 'Set GHCR_IMAGE to ghcr.io/OWNER/IMAGE' >&2; exit 1;
+}
+tag="${IMAGE_TAG:-sha-$(git rev-parse HEAD)}"
+[[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || { echo 'Invalid IMAGE_TAG' >&2; exit 1; }
+copy=(oras copy --recursive --from-oci-layout)
+if [[ -n "${GHCR_TOKEN:-}" ]]; then
+  username="${GHCR_USERNAME:-${GITHUB_ACTOR:-}}"
+  : "${username:?Set GHCR_USERNAME to the registry token owner}"
+  scratch="$(mktemp -d)"
+  trap 'rm -rf "$scratch"' EXIT
+  copy+=(--registry-config "$scratch/config.json")
+  printf '%s' "$GHCR_TOKEN" | oras login --registry-config "$scratch/config.json" \
+    ghcr.io --username "$username" --password-stdin
+fi
+"${copy[@]}" dist/oci:maestro "$repository:$tag"
+'''
 tools = { oras = "1.3.4" }
 
 [tasks."image:load"]
-description = "Load the verified native image into Docker as maestro:local"
-run = "python3 -B dev/oci.py load"
+description = "Load the scanned image into Docker (IMAGE_ARCH, IMAGE_LOCAL_TAG override defaults)"
+shell = "bash -euo pipefail -c"
+run = '''
+test -f dist/oci/.scanned || { echo 'Run mise run build first' >&2; exit 1; }
+arch="${IMAGE_ARCH:-$(docker version --format json | jq -er '.Server.Arch')}"
+case "$arch" in amd64|arm64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; esac
+docker image load --input "dist/maestro-$arch.tar"
+docker image tag "maestro:build-$arch" "${IMAGE_LOCAL_TAG:-maestro:local}"
+'''
 
 [tasks."image:test"]
 description = "Test the container's HTTP endpoints, shutdown and security settings"
@@ -54,7 +113,13 @@ run = "python3 -B dev/tests/container/smoke.py"
 
 [tasks.scan]
 description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
-run = "python3 -B dev/oci.py scan"
+shell = "bash -euo pipefail -c"
+run = '''
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+cp go.mod go.sum "$scratch/"
+trivy fs --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 "$scratch"
+'''
 tools = { trivy = "0.74.0" }
 
 [tasks."sdk:test"]
