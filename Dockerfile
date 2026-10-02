@@ -3,20 +3,24 @@ FROM --platform=$BUILDPLATFORM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f42
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY VERSION version.go ./
 COPY cmd ./cmd
 COPY internal ./internal
 ARG TARGETOS TARGETARCH
-ARG VERSION=dev
+ARG VERSION
+ARG REVISION
+ARG MODIFIED
+RUN test -z "$VERSION" || test "$VERSION" = "$(cat VERSION)"
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-    -ldflags="-s -w -X github.com/zpaden/maestro/internal/web.Version=${VERSION}" \
+    -ldflags="-s -w -X github.com/zpaden/maestro/internal/web.Revision=${REVISION} -X github.com/zpaden/maestro/internal/web.Modified=${MODIFIED}" \
     -o /out/maestro ./cmd/maestro
 
 FROM scratch
-ARG VERSION=dev
+ARG VERSION
 ARG REVISION
 ARG CREATED
-ARG SOURCE=https://github.com/zpaden/maestro
+ARG SOURCE=https://github.com/PadenZach/maestro
 LABEL org.opencontainers.image.title="maestro" \
       org.opencontainers.image.description="DBOS workflow inspection service with an HTMX Console" \
       org.opencontainers.image.source=$SOURCE \

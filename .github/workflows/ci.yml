@@ -2,6 +2,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -9,10 +10,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # New PR commits replace stale checks. Each main commit keeps its release run.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: plan
+        env:
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+        run: python3 -B dev/release.py plan
+
   checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -48,12 +66,9 @@ jobs:
           if-no-files-found: error
 
   image:
-    needs: [checks, sdk]
+    needs: [version, checks, sdk]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -63,15 +78,101 @@ jobs:
       - run: mise run build
       - run: mise run image:scan
       - run: mise run image:test
+
+  candidate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      repository: ${{ steps.build.outputs.repository }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ vars.GHCR_USERNAME || github.actor }}
           password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
-      - name: Publish image to GHCR
-        if: github.event_name != 'pull_request'
+      - name: Build and scan candidate
+        id: build
         env:
           IMAGE_REPOSITORY: ${{ vars.GHCR_IMAGE || format('ghcr.io/{0}', github.repository) }}
-        run: mise run image:publish
+        run: mise run image:candidate
+
+  candidate-test:
+    needs: [version, candidate]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: ${{ needs.candidate.outputs.repository }}@${{ needs.candidate.outputs.digest }}
+      EXPECTED_VERSION: ${{ needs.version.outputs.version }}
+      EXPECTED_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+      - env:
+          PLATFORM: linux/${{ matrix.arch }}
+        run: docker pull --platform "$PLATFORM" "$IMAGE"
+      - run: mise run image:test
+
+  publish:
+    needs: [version, candidate, candidate-test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Serialize reruns or competing commits for the same version.
+    concurrency:
+      group: publish-${{ needs.version.outputs.release == 'true' && needs.version.outputs.version || github.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IMAGE_REPOSITORY: ${{ needs.candidate.outputs.repository }}
+      IMAGE_DIGEST: ${{ needs.candidate.outputs.digest }}
+      RELEASE: ${{ needs.version.outputs.release }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.version.outputs.release == 'true'
+        with:
+          pattern: sdk-*-versions
+          path: dist
+          merge-multiple: true
+      - name: Promote tested image and publish version bump
+        run: python3 -B dev/release.py publish

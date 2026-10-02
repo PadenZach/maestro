@@ -1,6 +1,7 @@
 package web
 
 import (
+	"html"
 	"net/http/httptest"
 	"runtime/debug"
 	"strings"
@@ -18,7 +19,7 @@ func TestPageHasMaestroFooter(t *testing.T) {
 		t.Run(page, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			r.Page(w, page, map[string]any{"Title": "Test", "Status": map[string]string{"Label": "Online", "State": "online"}})
-			body := w.Body.String()
+			body := html.UnescapeString(w.Body.String())
 			for _, want := range []string{`<footer class="site-footer">`, `Maestro`, `href="https://opensource.org/license/mit"`, `MIT License`, `aria-label="Maestro version"`, maestroVersion(), `Not affiliated with DBOS, Inc. in any way.`, `/static/footer.css`} {
 				if !strings.Contains(body, want) {
 					t.Errorf("page lacks footer content %q", want)
@@ -33,20 +34,22 @@ func TestPageHasMaestroFooter(t *testing.T) {
 
 func TestMaestroBuildVersion(t *testing.T) {
 	for _, tc := range []struct {
-		name, override string
-		info           *debug.BuildInfo
-		want           string
+		name, version, revision, modified string
+		info                              *debug.BuildInfo
+		want                              string
 	}{
-		{"explicit release", "v1.2.3", nil, "v1.2.3"},
-		{"module release", "", &debug.BuildInfo{Main: debug.Module{Version: "v2.0.1"}}, "v2.0.1"},
-		{"revision", "", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abcdef1234567890"}}}, "dev+abcdef123456"},
-		{"modified revision", "", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abcdef1234567890"}, {Key: "vcs.modified", Value: "true"}}}, "dev+abcdef123456.dirty"},
-		{"short revision", "", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abc"}}}, "dev+abc"},
-		{"unavailable", "", nil, "dev"},
-		{"unversioned", "", &debug.BuildInfo{}, "dev"},
+		{"container release", "1.2.3", "abcdef1234567890", "false", nil, "1.2.3+abcdef123456"},
+		{"container dirty", "1.2.3", "abcdef1234567890", "true", nil, "1.2.3+abcdef123456.dirty"},
+		{"revision", "0.1.0", "", "", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abcdef1234567890"}}}, "0.1.0+abcdef123456"},
+		{"modified revision", "0.1.0", "", "", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "abcdef1234567890"}, {Key: "vcs.modified", Value: "true"}}}, "0.1.0+abcdef123456.dirty"},
+		{"explicit metadata wins", "0.1.0", "123456abcdef", "false", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "other"}, {Key: "vcs.modified", Value: "true"}}}, "0.1.0+123456abcdef"},
+		{"short revision", "0.1.0", "abc", "false", nil, "0.1.0+abc"},
+		{"prerelease", "0.2.0-rc.1", "abcdef123456", "false", nil, "0.2.0-rc.1+abcdef123456"},
+		{"existing metadata", "0.2.0+custom", "abcdef123456", "false", nil, "0.2.0+custom.abcdef123456"},
+		{"unavailable", "0.1.0", "", "", nil, "0.1.0+unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := buildVersion(tc.override, tc.info); got != tc.want {
+			if got := buildVersion(tc.version, tc.revision, tc.modified, tc.info); got != tc.want {
 				t.Errorf("build version = %q, want %q", got, tc.want)
 			}
 		})

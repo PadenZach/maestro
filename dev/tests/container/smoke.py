@@ -1,6 +1,7 @@
 """Exercise the built image under the Compose runtime restrictions."""
 
 import argparse
+import html
 import json
 import os
 import subprocess
@@ -121,10 +122,19 @@ def main():
                     ("/static/htmx.min.js", b"htmx"),
                 ):
                     with HTTP.open(base + route, timeout=3) as response:
+                        body = response.read()
                         assert (
                             response.status == 200
-                            and expected.lower() in response.read().lower()
+                            and expected.lower() in body.lower()
                         ), route
+                        if route == "/" and os.environ.get("EXPECTED_VERSION"):
+                            version = os.environ["EXPECTED_VERSION"]
+                            revision = os.environ["EXPECTED_REVISION"][:12]
+                            modified = ".dirty" if os.environ.get("EXPECTED_MODIFIED") == "true" else ""
+                            expected_footer = f'aria-label="Maestro version">{version}+{revision}{modified}</span>'
+                            assert expected_footer in html.unescape(body.decode()), "image has incorrect build version"
+                        if route == "/openapi.json" and os.environ.get("EXPECTED_VERSION"):
+                            assert json.loads(body)["info"]["version"] == os.environ["EXPECTED_VERSION"]
                 run("docker", "exec", container, "/probe/probe")
                 run("docker", "stop", "--timeout", "15", container)
                 state = json.loads(output("docker", "inspect", container))[0]

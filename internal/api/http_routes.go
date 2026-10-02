@@ -13,17 +13,13 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
-	"github.com/zpaden/maestro/internal/web"
+	"github.com/zpaden/maestro"
 )
 
 // httpAPI keeps documentation and JSON route registration together. Console
 // HTML and executor messages have separate contracts and route registrations.
 func (s *Server) httpAPI() huma.API {
-	version := web.Version
-	if version == "" {
-		version = "dev"
-	}
-	cfg := huma.DefaultConfig("Maestro HTTP API", version)
+	cfg := huma.DefaultConfig("Maestro HTTP API", maestro.Version())
 	// Existing JSON responses must retain their exact fields and escaping.
 	cfg.CreateHooks = nil
 	cfg.SchemasPath = ""
