@@ -9,14 +9,14 @@ run = "go run -buildvcs=true ./cmd/maestro"
 
 [tasks.fmt]
 description = "Format Go source"
-run = "gofmt -w version.go cmd internal dev/tests/container"
+run = "gofmt -w version.go cmd internal tests/container"
 
 [tasks.check]
 description = "Check formatting, build, vet, Staticcheck and run Go tests"
 run = [
   '''
 set -eu
-files="$(gofmt -l version.go cmd internal dev/tests/container)"
+files="$(gofmt -l version.go cmd internal tests/container)"
 if [ -n "$files" ]; then
   printf 'Run mise run fmt for:\n%s\n' "$files"
   exit 1
@@ -56,7 +56,7 @@ cp LICENSE "$scratch/"
 for system in linux darwin; do
   for arch in amd64 arm64; do
     CGO_ENABLED=0 GOOS="$system" GOARCH="$arch" go build -trimpath -buildvcs=false \
-      -ldflags="-s -w -X github.com/zpaden/maestro/internal/web.Revision=$revision -X github.com/zpaden/maestro/internal/web.Modified=$modified" \
+      -ldflags="-s -w -X github.com/PadenZach/maestro/internal/console.Revision=$revision -X github.com/PadenZach/maestro/internal/console.Modified=$modified" \
       -o "$scratch/maestro" ./cmd/maestro
     COPYFILE_DISABLE=1 tar -czf "$destination/maestro_${version}_${system}_${arch}.tar.gz" -C "$scratch" maestro LICENSE
   done
@@ -83,7 +83,7 @@ tools = { trivy = "0.74.0" }
 
 [tasks."image:test"]
 description = "Test the container's HTTP endpoints, shutdown and security settings"
-run = "bash dev/tests/container/smoke.sh"
+run = "bash tests/container/smoke.sh"
 
 [tasks.scan]
 description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
@@ -110,7 +110,7 @@ for major in ${DBOS_SDK_MAJOR:-2 3}; do
     *) echo 'DBOS_SDK_MAJOR must be 2 or 3' >&2; exit 1 ;;
   esac
   uv run --no-project --no-config --python 3.12 --with "$sdk" --upgrade-package dbos --prerelease disallow \
-    python -B dev/tests/python/gate.py --binary "$scratch/maestro"
+    python -B tests/sdk/run.py --binary "$scratch/maestro"
 done
 '''
 tools = { uv = "0.12.21" }
@@ -124,11 +124,11 @@ trap 'rm -rf "$scratch"' EXIT
 git clone --quiet --depth=1 --branch v0.10.1 https://github.com/dbos-inc/dbos-ctl.git "$scratch/source"
 test "$(git -C "$scratch/source" rev-parse HEAD)" = 17879522360ced42ea9a2a7778e0a2d0973d7901
 go -C "$scratch/source" build -o "$scratch/dbosctl" ./cmd/dbosctl
-DBOSCTL_BIN="$scratch/dbosctl" go test -tags=dbosctl -race -count=1 ./internal/api -run '^Test(LocalHTTPV2|HTTPWorkflow|HTTPV2|DBOSCTL)'
+DBOSCTL_BIN="$scratch/dbosctl" go test -tags=dbosctl -race -count=1 ./internal/api -run '^Test(API|HTTPWorkflow|DBOSCTL)'
 go build -o "$scratch/maestro" ./cmd/maestro
 for version in 2.31.1 3.1.0; do
-  uv run --locked --no-config --project "dev/tests/python/$version" \
-    python -B dev/tests/python/gate.py --binary "$scratch/maestro" --dbosctl-bin "$scratch/dbosctl"
+  uv run --locked --no-config --project "tests/sdk/$version" \
+    python -B tests/sdk/run.py --binary "$scratch/maestro" --dbosctl-bin "$scratch/dbosctl"
 done
 '''
 tools = { uv = "0.12.21" }
@@ -138,7 +138,7 @@ description = "Install the pinned DBOS environments used by acceptance tests"
 run = '''
 set -eu
 for version in 2.31.1 3.1.0; do
-  uv sync --locked --no-config --project "dev/tests/python/$version"
+  uv sync --locked --no-config --project "tests/sdk/$version"
 done
 '''
 tools = { uv = "0.12.21" }
@@ -150,7 +150,7 @@ run = '''
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 go build -o "$scratch/maestro" ./cmd/maestro
-python3 -B dev/tests/acceptance/postgres_gate.py --binary "$scratch/maestro"
+python3 -B tests/postgres/api.py --binary "$scratch/maestro"
 '''
 
 [tasks."ci:lint"]
@@ -165,5 +165,5 @@ run = '''
 recovery_tmp="$(mktemp -d)"
 trap 'rm -rf "$recovery_tmp"' EXIT
 go build -o "$recovery_tmp/maestro" ./cmd/maestro
-python3 -B dev/tests/acceptance/recovery_gate.py --binary "$recovery_tmp/maestro"
+python3 -B tests/postgres/recovery.py --binary "$recovery_tmp/maestro"
 '''

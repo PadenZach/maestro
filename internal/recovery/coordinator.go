@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zpaden/maestro/internal/hub"
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/hub"
+	"github.com/PadenZach/maestro/internal/protocol"
 )
 
 const (

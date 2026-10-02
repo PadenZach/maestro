@@ -15,7 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/protocol"
 )
 
 // ErrAppUnavailable is returned by Request when no executor of the named app is
@@ -66,12 +66,9 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 	}
 }
 
-// New constructs an empty hub. requestTimeout bounds a single executor
-// round-trip issued by Request; a non-positive value falls back to 30s.
+// New constructs an empty hub. requestTimeout must be positive and bounds a
+// single executor round-trip issued by Request.
 func New(log *slog.Logger, requestTimeout time.Duration) *Hub {
-	if requestTimeout <= 0 {
-		requestTimeout = 30 * time.Second
-	}
 	return &Hub{
 		log:            log,
 		requestTimeout: requestTimeout,

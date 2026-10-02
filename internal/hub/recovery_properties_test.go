@@ -16,7 +16,7 @@ import (
 	"github.com/coder/websocket"
 	"pgregory.net/rapid"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/protocol"
 )
 
 // These properties exercise recovery prerequisites that exist today. They do

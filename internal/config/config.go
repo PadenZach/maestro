@@ -1,4 +1,4 @@
-// Package config holds the conductor server configuration.
+// Package config holds the Maestro server configuration.
 package config
 
 import (
@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"time"
+
+	"github.com/PadenZach/maestro"
 )
 
 // Config is the fully-resolved server configuration.
@@ -33,18 +35,27 @@ type Config struct {
 // line flags override. Call once at startup.
 func Load() Config {
 	cfg := Config{
-		ListenAddr:      envOr("CONDUCTOR_LISTEN_ADDR", "127.0.0.1:8090"),
+		ListenAddr:      envOr("MAESTRO_LISTEN_ADDR", "127.0.0.1:8090"),
 		RequestTimeout:  30 * time.Second,
-		RecoveryTimeout: envDuration("CONDUCTOR_RECOVERY_TIMEOUT", time.Minute),
-		OrgName:         envOr("CONDUCTOR_ORG_NAME", "local"),
+		RecoveryTimeout: envDuration("MAESTRO_RECOVERY_TIMEOUT", time.Minute),
+		OrgName:         envOr("MAESTRO_ORG_NAME", "local"),
 	}
 	flags := flag.NewFlagSet("maestro", flag.ExitOnError)
+	version := flags.Bool("version", false, "print version and exit")
 	flags.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "HTTP listen address")
 	flags.DurationVar(&cfg.RequestTimeout, "request-timeout", cfg.RequestTimeout, "per-request executor round-trip timeout")
 	flags.DurationVar(&cfg.RecoveryTimeout, "recovery-timeout", cfg.RecoveryTimeout, "executor disconnect timeout before workflow recovery")
 	flags.StringVar(&cfg.OrgName, "org", cfg.OrgName, "single organization identifier (3-30 lowercase letters, digits or underscores)")
-	flags.BoolVar(&cfg.EnableAggregates, "enable-aggregates", envBool("CONDUCTOR_ENABLE_AGGREGATES"), "enable advanced aggregate queries and viewer (disabled by default)")
+	flags.BoolVar(&cfg.EnableAggregates, "enable-aggregates", envBool("MAESTRO_ENABLE_AGGREGATES"), "enable advanced aggregate queries and viewer (disabled by default)")
 	_ = flags.Parse(os.Args[1:])
+	if *version {
+		fmt.Fprintln(os.Stdout, "maestro", maestro.Version())
+		os.Exit(0)
+	}
+	if cfg.RequestTimeout <= 0 {
+		fmt.Fprintln(os.Stderr, "--request-timeout must be positive")
+		os.Exit(2)
+	}
 	if cfg.RecoveryTimeout <= 0 {
 		fmt.Fprintln(os.Stderr, "--recovery-timeout must be positive")
 		os.Exit(2)

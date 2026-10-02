@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/config"
+	"github.com/PadenZach/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/testserver"
 )
 
 func runDBOSCTL(t *testing.T, url string, args ...string) (int, string) {
@@ -47,7 +49,7 @@ func runDBOSCTL(t *testing.T, url string, args ...string) (int, string) {
 }
 
 func TestDBOSCTLReadMatrix(t *testing.T) {
-	ts, fe := localV2Fixture(t)
+	ts, fe := fixture(t)
 	code, out := runDBOSCTL(t, ts.URL, "list", "--limit", "2")
 	if code != 0 {
 		t.Fatalf("list: %d %s", code, out)
@@ -60,7 +62,7 @@ func TestDBOSCTLReadMatrix(t *testing.T) {
 	if code != 0 || strings.TrimSpace(out) != "[]" {
 		t.Fatalf("CLI filters/zero: %d %s", code, out)
 	}
-	wire := fe.body(t, protocol.MsgListWorkflows)
+	wire := fe.Body(t, protocol.MsgListWorkflows)
 	if wire["start_time"] != "2024-07-02T00:00:00Z" || wire["end_time"] != "2024-07-04T00:00:00Z" || wire["sort_desc"] != true || wire["queues_only"] != true || wire["limit"] != float64(0) {
 		t.Fatalf("CLI filters wire: %v", wire)
 	}
@@ -99,16 +101,16 @@ func TestDBOSCTLReadMatrix(t *testing.T) {
 }
 
 func TestDBOSCTLUnavailableAndRefusal(t *testing.T) {
-	ts, _ := localV2Server(t)
+	ts, _ := testserver.New(t, config.Config{EnableAggregates: true})
 	code, out := runDBOSCTL(t, ts.URL, "get", "wf-1")
 	if code != 1 || !strings.Contains(out, "unavailable") {
 		t.Fatalf("503: %d %s", code, out)
 	}
-	ts, h := localV2Server(t)
-	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	testserver.Connect(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]testserver.Responder{protocol.MsgGetWorkflow: func(map[string]any) map[string]any {
 		return map[string]any{"error_message": "private executor refusal"}
 	}})
-	waitFor(t, func() bool { return len(h.Executors()) == 1 })
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
 	code, out = runDBOSCTL(t, ts.URL, "get", "wf-1")
 	if code != 1 || !strings.Contains(out, "private executor refusal") {
 		t.Fatalf("502: %d %s", code, out)

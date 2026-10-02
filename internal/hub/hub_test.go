@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PadenZach/maestro/internal/protocol"
 	"github.com/coder/websocket"
-	"github.com/zpaden/maestro/internal/protocol"
 )
 
 func testHub(t *testing.T, timeout time.Duration) (*Hub, *httptest.Server) {

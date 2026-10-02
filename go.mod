@@ -1,4 +1,4 @@
-module github.com/zpaden/maestro
+module github.com/PadenZach/maestro
 
 go 1.26
 

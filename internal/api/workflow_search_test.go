@@ -1,145 +1,345 @@
 package api_test
 
 import (
-	"fmt"
-	"html"
-	"net/http"
-	"net/url"
-	"reflect"
-	"regexp"
+	"encoding/json"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/config"
+	"github.com/PadenZach/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/testserver"
 )
 
-// The fake follows the released Python 3.1.0 exact-name list handler, including
-// server-side AND filters and offset/limit. Console substring matching must not
-// depend on a nonexistent fuzzy wire option.
-func TestConsoleWorkflowNameSearchPagesCandidatesBeforeMatches(t *testing.T) {
-	ts, h := newTestServer(t)
-	var mu sync.Mutex
-	var bodies []map[string]any
-	failLater := false
-	candidates := make([]map[string]any, 0)
-	for i := 0; i < 52; i++ {
-		candidates = append(candidates, map[string]any{"WorkflowUUID": fmt.Sprintf("run-billing-%02d", i), "WorkflowName": "billing", "Status": "SUCCESS", "QueueName": "orders"})
-	}
-	for i := 0; i < 31; i++ {
-		candidates = append(candidates, map[string]any{"WorkflowUUID": fmt.Sprintf("run-gate-%02d", i), "WorkflowName": "gate_workflow", "Status": "SUCCESS", "QueueName": "orders"})
-	}
-	candidates = append(candidates, map[string]any{"WorkflowUUID": "other-gate", "WorkflowName": "gate_workflow", "Status": "ERROR", "QueueName": "different"})
-	dialFake(t, ts, "search-app", "testkey", "executor", map[protocol.MessageType]respondFn{protocol.MsgListWorkflows: func(req map[string]any) map[string]any {
-		b := req["body"].(map[string]any)
-		mu.Lock()
-		bodies = append(bodies, b)
-		fail := failLater
-		mu.Unlock()
-		offset := int(b["offset"].(float64))
-		limit := int(b["limit"].(float64))
-		if fail && offset >= 26 {
-			return map[string]any{"error_message": "later candidate page refused"}
+func TestAPIListWorkflowsAndExpandedSearchOptions(t *testing.T) {
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	var calls atomic.Int32
+	fe := testserver.Connect(t, ts, "fixture-app", "testkey", "workflow-reader", map[protocol.MessageType]testserver.Responder{
+		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+			calls.Add(1)
+			return map[string]any{"output": []any{}}
+		},
+	})
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+
+	t.Run("official GET list", func(t *testing.T) {
+		code, contentType, raw := testserver.Request(t, ts.URL+workflowRoot+"?status=SUCCESS&workflowName=job&limit=0&offset=0&sortDesc=false&loadInput=true&loadOutput=false", "GET", "")
+		if code != 200 || !strings.HasPrefix(contentType, "application/json") || strings.TrimSpace(raw) != "[]" {
+			t.Fatalf("list workflows: %d %s %s", code, contentType, raw)
 		}
-		var filtered []map[string]any
-		for _, wf := range candidates {
-			ok := true
-			for key, field := range map[string]string{"workflow_name": "WorkflowName", "status": "Status", "queue_name": "QueueName"} {
-				if v, exists := b[key]; exists && !reflect.DeepEqual(v, []any{wf[field]}) {
-					ok = false
-				}
-			}
-			if v, exists := b["workflow_id_prefix"]; exists && !strings.HasPrefix(wf["WorkflowUUID"].(string), v.([]any)[0].(string)) {
-				ok = false
-			}
-			if ok {
-				filtered = append(filtered, wf)
+		wire := fe.Body(t, protocol.MsgListWorkflows)
+		for key, expected := range map[string]any{
+			"status": []any{"SUCCESS"}, "workflow_name": []any{"job"},
+			"limit": float64(0), "offset": float64(0), "sort_desc": false,
+			"load_input": true, "load_output": false, "queues_only": false,
+		} {
+			if actual, ok := wire[key]; !ok || !jsonValuesEqual(actual, expected) {
+				t.Errorf("GET wire %s = %#v; want %#v", key, actual, expected)
 			}
 		}
-		if offset > len(filtered) {
-			offset = len(filtered)
+	})
+
+	t.Run("expanded POST search", func(t *testing.T) {
+		body := `{"attributes":{"tenant":"blue"},"completedAfter":"2024-01-01T00:00:00Z","completedBefore":"2025-01-01T00:00:00Z","dequeuedAfter":"2024-02-01T00:00:00Z","dequeuedBefore":"2024-12-01T00:00:00Z","executorId":["exec-1"],"forkedFrom":["source-1"],"hasParent":false,"loadInput":true,"loadOutput":false,"parentWorkflowId":["parent-1"],"scheduleName":["daily"],"wasForkedFrom":false,"workflowIdPrefix":["wf-"]}`
+		code, contentType, raw := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", body)
+		if code != 200 || !strings.HasPrefix(contentType, "application/json") || strings.TrimSpace(raw) != "[]" {
+			t.Fatalf("expanded search: %d %s %s", code, contentType, raw)
 		}
-		end := offset + limit
-		if end > len(filtered) {
-			end = len(filtered)
-		}
-		return map[string]any{"output": filtered[offset:end]}
-	}})
-	waitFor(t, func() bool { return len(h.Executors()) == 1 })
-	base := ts.URL + "/apps/search-app/workflows"
-	for _, query := range []string{"gate", "work", "GATE", "  gate  "} {
-		_, body := getBody(t, base+"?name="+url.QueryEscape(query)+"&status=SUCCESS&queue=orders&id_prefix=run-")
-		if !strings.Contains(body, "run-gate-00") || !strings.Contains(body, "run-gate-24") || strings.Contains(body, "run-billing") || strings.Contains(body, "other-gate") {
-			t.Fatalf("query %q must display first 25 matching runs after multiple empty candidate pages: %s", query, body)
-		}
-		next := searchPagerURL(t, body, "Next")
-		_, second := getBody(t, ts.URL+next)
-		if !strings.Contains(second, "run-gate-25") || !strings.Contains(second, "run-gate-30") || !strings.Contains(second, "26–31") || strings.Contains(second, "run-gate-24") {
-			t.Fatalf("second matching page incorrect: %s", second)
-		}
-		prev := searchPagerURL(t, second, "Prev")
-		_, first := getBody(t, ts.URL+prev)
-		if !strings.Contains(first, "run-gate-00") {
-			t.Fatalf("previous page lost filters: %s", first)
-		}
-		for _, link := range []string{next, prev} {
-			u, _ := url.Parse(link)
-			for k, v := range map[string]string{"name": strings.TrimSpace(query), "status": "SUCCESS", "queue": "orders", "id_prefix": "run-"} {
-				if u.Query().Get(k) != v {
-					t.Fatalf("pager %q lost %s", link, k)
-				}
+		wire := fe.Body(t, protocol.MsgListWorkflows)
+		for key, expected := range map[string]any{
+			"attributes":      map[string]any{"tenant": "blue"},
+			"completed_after": "2024-01-01T00:00:00Z", "completed_before": "2025-01-01T00:00:00Z",
+			"dequeued_after": "2024-02-01T00:00:00Z", "dequeued_before": "2024-12-01T00:00:00Z",
+			"executor_id": []any{"exec-1"}, "forked_from": []any{"source-1"}, "has_parent": false,
+			"load_input": true, "load_output": false, "parent_workflow_id": []any{"parent-1"},
+			"schedule_name": []any{"daily"}, "was_forked_from": false, "workflow_id_prefix": []any{"wf-"},
+		} {
+			if actual, ok := wire[key]; !ok || !jsonValuesEqual(actual, expected) {
+				t.Errorf("POST wire %s = %#v; want %#v", key, actual, expected)
 			}
 		}
-	}
-	for _, query := range []string{"", "   "} {
-		_, body := getBody(t, base+"?name="+url.QueryEscape(query)+"&status=SUCCESS&queue=orders&id_prefix=run-")
-		if !strings.Contains(body, "run-billing-00") {
-			t.Fatalf("blank query must restore first non-name-filtered page: %s", body)
-		}
-	}
-	_, empty := getBody(t, base+"/rows?name=missing")
-	if !strings.Contains(empty, "No workflows match these filters.") {
-		t.Fatalf("empty success missing: %s", empty)
-	}
-	_, literal := getBody(t, base+"/rows?name=gate.*")
-	if !strings.Contains(literal, "No workflows match these filters.") {
-		t.Fatalf("query must be a literal substring: %s", literal)
-	}
-	_, jsonBody := getBody(t, ts.URL+"/api/search-app/workflows?name=gate")
-	if strings.Contains(jsonBody, "run-gate") {
-		t.Fatalf("JSON exact-name semantics changed: %s", jsonBody)
-	}
-	_, jsonExact := getBody(t, ts.URL+"/api/search-app/workflows?name=gate_workflow")
-	if !strings.Contains(jsonExact, "run-gate-00") {
-		t.Fatalf("JSON exact name failed: %s", jsonExact)
-	}
-	mu.Lock()
-	for _, b := range bodies {
-		if b["load_input"] != false || b["load_output"] != false {
-			t.Errorf("candidate list loaded blobs: %#v", b)
-		}
-		if b["limit"].(float64) > 26 {
-			t.Errorf("unbounded candidate read: %#v", b)
-		}
-	}
-	failLater = true
-	mu.Unlock()
-	status, failed := getBody(t, base+"?name=gate")
-	if status != http.StatusBadGateway || !strings.Contains(failed, "later candidate page refused") || strings.Contains(failed, "No workflows match") {
-		t.Fatalf("later failure became empty success: %d %s", status, failed)
-	}
-	_, failed = getBody(t, base+"/rows?name=gate")
-	if !strings.Contains(failed, "later candidate page refused") || strings.Contains(failed, "No workflows match") {
-		t.Fatalf("HTMX later failure became empty success: %s", failed)
+	})
+	if calls.Load() != 2 {
+		t.Fatalf("dispatch calls = %d; want 2", calls.Load())
 	}
 }
 
-func searchPagerURL(t *testing.T, body, label string) string {
-	t.Helper()
-	re := regexp.MustCompile(`<button hx-get="([^"]+)" hx-target="#wf-rows">[^<]*` + label)
-	m := re.FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("missing %s page button: %s", label, body)
+func jsonValuesEqual(actual, expected any) bool {
+	a, _ := json.Marshal(actual)
+	b, _ := json.Marshal(expected)
+	return string(a) == string(b)
+}
+
+func TestAPIWorkflowSearchPreservesOmittedNullEmptyFalseAndZero(t *testing.T) {
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	var calls atomic.Int32
+	fe := testserver.Connect(t, ts, "fixture-app", "testkey", "workflow-semantics", map[protocol.MessageType]testserver.Responder{
+		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+			calls.Add(1)
+			return map[string]any{"output": []any{}}
+		},
+	})
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+
+	code, _, raw := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", "")
+	if code != 200 || strings.TrimSpace(raw) != "[]" {
+		t.Fatalf("optional search body: %d %s", code, raw)
 	}
-	return html.UnescapeString(m[1])
+	wire := fe.Body(t, protocol.MsgListWorkflows)
+	if len(wire) != 4 || wire["sort_desc"] != false || wire["load_input"] != false || wire["load_output"] != false || wire["queues_only"] != false {
+		t.Fatalf("omitted defaults: %#v", wire)
+	}
+
+	nullArrays := `{"workflowIds":null,"workflowName":null,"user":null,"status":null,"appVersion":null,"executorId":null,"forkedFrom":null,"parentWorkflowId":null,"queueName":null,"scheduleName":null,"workflowIdPrefix":null}`
+	code, _, raw = testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", nullArrays)
+	if code != 200 || strings.TrimSpace(raw) != "[]" {
+		t.Fatalf("nullable search arrays: %d %s", code, raw)
+	}
+	wire = fe.Body(t, protocol.MsgListWorkflows)
+	if len(wire) != 4 {
+		t.Fatalf("null arrays must be omitted: %#v", wire)
+	}
+
+	emptyArrays := `{"workflowIds":[],"workflowName":[],"user":[],"status":[],"appVersion":[],"executorId":[],"forkedFrom":[],"parentWorkflowId":[],"queueName":[],"scheduleName":[],"workflowIdPrefix":[],"attributes":{},"sortDesc":false,"queuesOnly":false,"loadInput":false,"loadOutput":false,"wasForkedFrom":false,"hasParent":false,"limit":0,"offset":0}`
+	code, _, raw = testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", emptyArrays)
+	if code != 200 || strings.TrimSpace(raw) != "[]" {
+		t.Fatalf("empty/false/zero search values: %d %s", code, raw)
+	}
+	wire = fe.Body(t, protocol.MsgListWorkflows)
+	for _, key := range []string{"workflow_uuids", "workflow_name", "authenticated_user", "status", "application_version", "executor_id", "forked_from", "parent_workflow_id", "queue_name", "schedule_name", "workflow_id_prefix"} {
+		value, ok := wire[key].([]any)
+		if !ok || len(value) != 0 {
+			t.Errorf("explicit empty %s not preserved: %#v", key, wire[key])
+		}
+	}
+	if attributes, ok := wire["attributes"].(map[string]any); !ok || len(attributes) != 0 {
+		t.Errorf("empty attributes not preserved: %#v", wire["attributes"])
+	}
+	for _, key := range []string{"sort_desc", "queues_only", "load_input", "load_output", "was_forked_from", "has_parent"} {
+		if value, ok := wire[key]; !ok || value != false {
+			t.Errorf("explicit false %s not preserved: %#v", key, value)
+		}
+	}
+	if wire["limit"] != float64(0) || wire["offset"] != float64(0) {
+		t.Errorf("explicit zero pagination not preserved: %#v", wire)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("dispatch calls = %d; want 3", calls.Load())
+	}
+}
+
+func TestAPIWorkflowReadStrictRequestValidation(t *testing.T) {
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	var calls atomic.Int32
+	fe := testserver.Connect(t, ts, "fixture-app", "testkey", "workflow-strict", map[protocol.MessageType]testserver.Responder{
+		protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+			calls.Add(1)
+			return map[string]any{"output": []any{}}
+		},
+	})
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+
+	code, _, raw := testserver.Request(t, ts.URL+workflowRoot+"?status=SUCCESS%2CERROR&workflowName=", "GET", "")
+	if code != 200 || strings.TrimSpace(raw) != "[]" {
+		t.Fatalf("scalar comma/empty query values: %d %s", code, raw)
+	}
+	wire := fe.Body(t, protocol.MsgListWorkflows)
+	if !jsonValuesEqual(wire["status"], []any{"SUCCESS,ERROR"}) || !jsonValuesEqual(wire["workflow_name"], []any{""}) {
+		t.Fatalf("GET scalar values were split or dropped: %#v", wire)
+	}
+
+	before := calls.Load()
+	for _, query := range []string{
+		"status=SUCCESS&status=ERROR", "workflowName=a&workflowName=b", "limit=1&limit=2",
+		"sortDesc=False", "loadInput=1", "loadOutput=", "limit=-1", "offset=1.5",
+		"queuesOnly=true", "status=%FF", "bad=%zz", "unexpected=value",
+	} {
+		code, contentType, body := testserver.Request(t, ts.URL+workflowRoot+"?"+query, "GET", "")
+		if code != 400 || !strings.HasPrefix(contentType, "application/problem+json") {
+			t.Errorf("GET query %q: %d %s %s", query, code, contentType, body)
+		}
+	}
+	invalidBodies := []string{
+		`{"$schema":"//schemas/WorkflowSearchBody.json"}`, `{"applicationName":["other"]}`,
+		`{"attributes":null}`, `{"attributes":[]}`, `{"attributes":"value"}`,
+		`{"completedAfter":null}`, `{"completedBefore":""}`, `{"dequeuedAfter":"not-a-date"}`, `{"dequeuedBefore":0}`,
+		`{"executorId":null,"executorId":[]}`, `{"executorId":"exec"}`, `{"forkedFrom":[null]}`,
+		`{"hasParent":null}`, `{"loadInput":null}`, `{"loadOutput":1}`, `{"wasForkedFrom":"false"}`,
+		`{"scheduleName":{}}`, `{"workflowIdPrefix":false}`, `{"unknown":true}`, `[]`, `{ } trailing`,
+		string([]byte{'{', '"', 's', 't', 'a', 't', 'u', 's', '"', ':', '"', 0xff, '"', '}'}),
+	}
+	for _, body := range invalidBodies {
+		code, contentType, response := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", body)
+		if code != 400 || !strings.HasPrefix(contentType, "application/problem+json") {
+			t.Errorf("POST body %q: %d %s %s", body, code, contentType, response)
+		}
+	}
+	for _, target := range []string{
+		ts.URL + "/v2/orgs/local/apps/UPPER/workflows",
+		ts.URL + "/v2/orgs/local/apps/UPPER/workflows/search",
+	} {
+		method, body := "GET", ""
+		if strings.HasSuffix(target, "/search") {
+			method, body = "POST", `{}`
+		}
+		code, _, _ := testserver.Request(t, target, method, body)
+		if code != 400 {
+			t.Errorf("invalid app %s: status %d", target, code)
+		}
+	}
+	if calls.Load() != before {
+		t.Fatalf("invalid input dispatched %d calls; before=%d", calls.Load(), before)
+	}
+}
+
+func TestAPIWorkflowReadCapabilityAndRetryBoundaries(t *testing.T) {
+	expandedBody := `{"completedAfter":"2024-01-01T00:00:00Z","executorId":[],"wasForkedFrom":false}`
+
+	t.Run("expanded filters attempt unrecognized SDK", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		dialScheduleFake(t, ts.URL, "future", "3.1.1", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				calls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", expandedBody)
+		if code != 200 || calls.Load() != 1 || strings.TrimSpace(body) != "[]" {
+			t.Fatalf("unrecognized SDK expanded filters: status=%d calls=%d body=%s", code, calls.Load(), body)
+		}
+	})
+
+	t.Run("expanded filters attempt other languages", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		testserver.ConnectVersion(t, ts.URL, "fixture-app", "typescript", "typescript", "5.1", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				calls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", expandedBody)
+		if code != 200 || calls.Load() != 1 || strings.TrimSpace(body) != "[]" {
+			t.Fatalf("other language expanded filters: status=%d calls=%d body=%s", code, calls.Load(), body)
+		}
+	})
+
+	t.Run("expanded filters allow mixed peers", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var reviewedCalls, unknownCalls atomic.Int32
+		dialScheduleFake(t, ts.URL, "unknown", "3.1.1", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				unknownCalls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		dialScheduleFake(t, ts.URL, "reviewed", "2.24.0", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				reviewedCalls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 2 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", expandedBody)
+		if code != 200 || reviewedCalls.Load()+unknownCalls.Load() != 1 || strings.TrimSpace(body) != "[]" {
+			t.Fatalf("mixed expanded filters: status=%d reviewed=%d unknown=%d body=%s", code, reviewedCalls.Load(), unknownCalls.Load(), body)
+		}
+	})
+
+	t.Run("recent filters attempt unrecognized SDK", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		dialScheduleFake(t, ts.URL, "future", "3.1.1", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				calls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", `{"attributes":{"tenant":"blue"}}`)
+		if code != 200 || calls.Load() != 1 || strings.TrimSpace(body) != "[]" {
+			t.Fatalf("unrecognized SDK: status=%d calls=%d body=%s", code, calls.Load(), body)
+		}
+	})
+
+	t.Run("reviewed legacy fields retain Python 2.24 compatibility", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		dialScheduleFake(t, ts.URL, "legacy", "2.24.0", map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				calls.Add(1)
+				return map[string]any{"output": []any{}}
+			},
+		})
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+		body := `{"completedAfter":"2024-01-01T00:00:00Z","dequeuedBefore":"2025-01-01T00:00:00Z","executorId":["exec"],"forkedFrom":["source"],"hasParent":false,"parentWorkflowId":["parent"],"wasForkedFrom":false,"workflowIdPrefix":["wf-"]}`
+		code, _, response := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", body)
+		if code != 200 || calls.Load() != 1 || strings.TrimSpace(response) != "[]" {
+			t.Fatalf("reviewed legacy SDK: status=%d calls=%d body=%s", code, calls.Load(), response)
+		}
+	})
+
+	t.Run("executor refusal is final", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		for _, id := range []string{"one", "two"} {
+			dialScheduleFake(t, ts.URL, id, "3.1.0", map[protocol.MessageType]testserver.Responder{
+				protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+					calls.Add(1)
+					return map[string]any{"error_message": "metadata-only refusal"}
+				},
+			})
+		}
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 2 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", `{"attributes":{"tenant":"blue"}}`)
+		if code != 502 || calls.Load() != 1 || !strings.Contains(body, "metadata-only refusal") {
+			t.Fatalf("refusal bypass: status=%d calls=%d body=%s", code, calls.Load(), body)
+		}
+	})
+
+	t.Run("pure read disconnect retries another peer", func(t *testing.T) {
+		ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+		var calls atomic.Int32
+		handlers := map[protocol.MessageType]testserver.Responder{
+			protocol.MsgListWorkflows: func(map[string]any) map[string]any {
+				if calls.Add(1) == 1 {
+					return nil
+				}
+				return map[string]any{"output": []any{}}
+			},
+		}
+		for _, id := range []string{"one", "two"} {
+			testserver.ConnectVersion(t, ts.URL, "fixture-app", id, "", "", handlers)
+		}
+		testserver.Wait(t, func() bool { return len(h.Executors()) == 2 })
+		code, _, body := testserver.Request(t, ts.URL+workflowRoot+"/search", "POST", `{"scheduleName":["daily"]}`)
+		if code != 200 || calls.Load() != 2 || strings.TrimSpace(body) != "[]" {
+			t.Fatalf("disconnect retry: status=%d calls=%d body=%s", code, calls.Load(), body)
+		}
+	})
+}
+
+func TestAPIListWorkflowsUnavailableAndNullOutput(t *testing.T) {
+	ts, _ := testserver.New(t, config.Config{EnableAggregates: true})
+	code, _, _ := testserver.Request(t, ts.URL+workflowRoot, "GET", "")
+	if code != 503 {
+		t.Fatalf("unavailable GET list status=%d", code)
+	}
+
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	testserver.Connect(t, ts, "fixture-app", "testkey", "null-list", map[protocol.MessageType]testserver.Responder{
+		protocol.MsgListWorkflows: func(map[string]any) map[string]any { return map[string]any{"output": nil} },
+	})
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+	for _, request := range []struct {
+		method, suffix, body string
+	}{{"GET", "", ""}, {"POST", "/search", `{}`}} {
+		code, contentType, body := testserver.Request(t, ts.URL+workflowRoot+request.suffix, request.method, request.body)
+		if code != 502 || !strings.HasPrefix(contentType, "application/problem+json") || !strings.Contains(body, "null") {
+			t.Errorf("null output %s: %d %s %s", request.method, code, contentType, body)
+		}
+	}
 }

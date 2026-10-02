@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PadenZach/maestro/internal/protocol"
 	"github.com/coder/websocket"
-	"github.com/zpaden/maestro/internal/protocol"
 )
 
 func versionedPeer(t *testing.T, tsURL, language, sdkVersion, appVersion string) *websocket.Conn {

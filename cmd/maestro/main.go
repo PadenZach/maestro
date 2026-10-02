@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zpaden/maestro/internal/api"
-	"github.com/zpaden/maestro/internal/config"
-	"github.com/zpaden/maestro/internal/hub"
-	"github.com/zpaden/maestro/internal/recovery"
+	"github.com/PadenZach/maestro/internal/config"
+	"github.com/PadenZach/maestro/internal/hub"
+	"github.com/PadenZach/maestro/internal/recovery"
+	"github.com/PadenZach/maestro/internal/server"
 )
 
 func serve(ctx context.Context, listener net.Listener, server *http.Server, h *hub.Hub, recoverWorkflows func(context.Context)) error {
@@ -63,7 +63,7 @@ func main() {
 
 	h := hub.New(log, cfg.RequestTimeout)
 	coordinator := recovery.New(log, h, cfg.RecoveryTimeout)
-	srv := api.New(cfg, h, log)
+	srv := server.New(cfg, h, log)
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
@@ -73,7 +73,7 @@ func main() {
 	log.Info("maestro listening", "addr", listener.Addr().String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, listener, &http.Server{Handler: srv.Handler()}, h, coordinator.Run); err != nil {
+	if err := serve(ctx, listener, &http.Server{Handler: srv}, h, coordinator.Run); err != nil {
 		log.Error("server shutdown failed", "err", err)
 		os.Exit(1)
 	}

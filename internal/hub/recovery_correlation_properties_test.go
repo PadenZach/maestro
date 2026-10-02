@@ -13,7 +13,7 @@ import (
 	"github.com/coder/websocket"
 	"pgregory.net/rapid"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/protocol"
 )
 
 // Responses, late/duplicate frames and caller cancellation are interleaved

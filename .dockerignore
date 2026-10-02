@@ -10,3 +10,4 @@
 !Dockerfile
 **/*_test.go
 internal/protocol/testdata/
+internal/testserver/

@@ -13,7 +13,7 @@ ARG MODIFIED
 RUN test -z "$VERSION" || test "$VERSION" = "$(cat VERSION)"
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-    -ldflags="-s -w -X github.com/zpaden/maestro/internal/web.Revision=${REVISION} -X github.com/zpaden/maestro/internal/web.Modified=${MODIFIED}" \
+    -ldflags="-s -w -X github.com/PadenZach/maestro/internal/console.Revision=${REVISION} -X github.com/PadenZach/maestro/internal/console.Modified=${MODIFIED}" \
     -o /out/maestro ./cmd/maestro
 
 FROM scratch
@@ -33,6 +33,6 @@ LABEL org.opencontainers.image.title="maestro" \
 COPY --from=build /out/maestro /maestro
 USER 65532:65532
 # Container traffic arrives through its network interface, not its loopback.
-ENV CONDUCTOR_LISTEN_ADDR=:8090
+ENV MAESTRO_LISTEN_ADDR=:8090
 EXPOSE 8090
 ENTRYPOINT ["/maestro"]

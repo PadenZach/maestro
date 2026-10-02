@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PadenZach/maestro/internal/protocol"
 	"github.com/coder/websocket"
-	"github.com/zpaden/maestro/internal/protocol"
 )
 
 func TestRecoveryRequestsMatchApplicationVersion(t *testing.T) {

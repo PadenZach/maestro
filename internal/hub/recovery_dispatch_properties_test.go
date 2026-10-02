@@ -14,7 +14,7 @@ import (
 
 	"pgregory.net/rapid"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/protocol"
 )
 
 // The dispatch oracle declares a few contract-defined reads and mutations; it

@@ -1,6 +1,10 @@
 package protocol
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 // This file mirrors the Python 3.1.0 inspection-read definitions and the
 // matching ConductorWebsocket dispatch branches. Request bodies retain omitted,
@@ -287,4 +291,17 @@ type GetStepAggregatesResponse struct {
 type ExportWorkflowResponse struct {
 	BaseResponse
 	SerializedWorkflow *string `json:"serialized_workflow"`
+}
+
+// Validate checks the fields required to display a schedule.
+func (s ScheduleOutput) Validate() error {
+	if !s.HasRequiredFields() {
+		return fmt.Errorf("schedule missing required SDK fields")
+	}
+	if s.LastFiredAt != nil {
+		if _, err := time.Parse(time.RFC3339Nano, *s.LastFiredAt); err != nil {
+			return fmt.Errorf("schedule last_fired_at must be RFC3339: %w", err)
+		}
+	}
+	return nil
 }

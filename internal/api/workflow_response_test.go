@@ -6,7 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/zpaden/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/config"
+	"github.com/PadenZach/maestro/internal/protocol"
+	"github.com/PadenZach/maestro/internal/testserver"
 )
 
 // Released Python 3.1.0 WorkflowsOutput explicitly serializes null priority and
@@ -14,16 +16,16 @@ import (
 func TestHTTPWorkflowPreservesSDKNulls(t *testing.T) {
 	for _, field := range []string{"Priority", "UpdatedAt"} {
 		t.Run(field, func(t *testing.T) {
-			ts, h := localV2Server(t)
-			record := localV2Record()
+			ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+			record := record()
 			record[field] = nil
-			dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
+			testserver.Connect(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]testserver.Responder{
 				protocol.MsgGetWorkflow:   func(map[string]any) map[string]any { return map[string]any{"output": record} },
 				protocol.MsgListWorkflows: func(map[string]any) map[string]any { return map[string]any{"output": []any{record}} },
 			})
-			waitFor(t, func() bool { return len(h.Executors()) == 1 })
+			testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
 			for _, route := range []struct{ suffix, method, body string }{{"/wf-1", "GET", ""}, {"", "GET", ""}, {"/search", "POST", "{}"}} {
-				code, _, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+route.suffix, route.method, route.body)
+				code, _, raw := testserver.Request(t, ts.URL+workflowRoot+route.suffix, route.method, route.body)
 				if code != 200 {
 					t.Errorf("%s null %s: status=%d body=%s", route.suffix, field, code, raw)
 					continue
@@ -57,18 +59,18 @@ func TestHTTPWorkflowResponseIntegrity(t *testing.T) {
 		response map[string]any
 	}{
 		{"missing output", map[string]any{}},
-		{"wrong identity", map[string]any{"output": func() map[string]any { r := localV2Record(); r["WorkflowUUID"] = "another-workflow"; return r }()}},
+		{"wrong identity", map[string]any{"output": func() map[string]any { r := record(); r["WorkflowUUID"] = "another-workflow"; return r }()}},
 	} {
 		for _, suffix := range []string{"/wf-1", "/wf-1/steps"} {
 			t.Run(tc.name+suffix, func(t *testing.T) {
-				ts, h := localV2Server(t)
+				ts, h := testserver.New(t, config.Config{EnableAggregates: true})
 				var stepCalls atomic.Int32
-				dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{
+				testserver.Connect(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]testserver.Responder{
 					protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return tc.response },
 					protocol.MsgListSteps:   func(map[string]any) map[string]any { stepCalls.Add(1); return map[string]any{"output": []any{}} },
 				})
-				waitFor(t, func() bool { return len(h.Executors()) == 1 })
-				code, ct, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+suffix, "GET", "")
+				testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+				code, ct, raw := testserver.Request(t, ts.URL+workflowRoot+suffix, "GET", "")
 				if code != 502 || !strings.HasPrefix(ct, "application/problem+json") {
 					t.Errorf("malformed workflow response: status=%d body=%s", code, raw)
 				}
@@ -81,20 +83,20 @@ func TestHTTPWorkflowResponseIntegrity(t *testing.T) {
 }
 
 func TestHTTPWorkflowTimestampRange(t *testing.T) {
-	ts, h := localV2Server(t)
-	record := localV2Record()
+	ts, h := testserver.New(t, config.Config{EnableAggregates: true})
+	record := record()
 	record["CreatedAt"] = "-62135596800001"
-	dialFake(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]respondFn{protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return map[string]any{"output": record} }})
-	waitFor(t, func() bool { return len(h.Executors()) == 1 })
-	code, _, raw := localV2Request(t, ts.URL+localV2WorkflowRoot+"/wf-1", "GET", "")
+	testserver.Connect(t, ts, "fixture-app", "testkey", "exec-1", map[protocol.MessageType]testserver.Responder{protocol.MsgGetWorkflow: func(map[string]any) map[string]any { return map[string]any{"output": record} }})
+	testserver.Wait(t, func() bool { return len(h.Executors()) == 1 })
+	code, _, raw := testserver.Request(t, ts.URL+workflowRoot+"/wf-1", "GET", "")
 	if code != 502 {
 		t.Fatalf("timestamp below supported range: status=%d body=%s", code, raw)
 	}
 }
 
 func TestHTTPWorkflowPublishedNullability(t *testing.T) {
-	ts, _ := localV2Server(t)
-	_, _, raw := localV2Request(t, ts.URL+"/openapi.json", "GET", "")
+	ts, _ := testserver.New(t, config.Config{EnableAggregates: true})
+	_, _, raw := testserver.Request(t, ts.URL+"/openapi.json", "GET", "")
 	var spec map[string]any
 	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
 		t.Fatal(err)

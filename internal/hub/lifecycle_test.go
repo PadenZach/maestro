@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PadenZach/maestro/internal/protocol"
 	"github.com/coder/websocket"
-	"github.com/zpaden/maestro/internal/protocol"
 )
 
 // During shutdown, Shutdown owns both pre-registration and registered sockets.

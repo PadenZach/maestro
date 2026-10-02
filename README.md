@@ -10,7 +10,8 @@ Download Linux or macOS binaries from the
 [mise's GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
 
 ```sh
-mise use -g github:PadenZach/maestro@0.3.0
+mise use -g github:PadenZach/maestro@0.4.0
+maestro --version
 maestro --help
 ```
 
@@ -19,11 +20,11 @@ also includes SHA-256 checksums in `checksums.txt`. Mise selects the platform
 automatically.
 Private repository access requires a GitHub token with access to this repository.
 
-The [tagged OCI image](https://github.com/PadenZach/maestro/pkgs/container/maestro?tag=0.3.0)
+The [tagged OCI image](https://github.com/PadenZach/maestro/pkgs/container/maestro?tag=0.4.0)
 supports Linux amd64 and arm64:
 
 ```sh
-docker pull ghcr.io/padenzach/maestro:0.3.0
+docker pull ghcr.io/padenzach/maestro:0.4.0
 ```
 
 ## Local development
@@ -48,12 +49,12 @@ mise run check
 For the pinned Postgres tests, run `mise run sdk:install`, set `POSTGRES18_BIN`
 to your Postgres 18 bin directory, then run `mise run postgres:test` or
 `mise run recovery:test`. `mise run dbosctl:test` also checks the pinned CLI.
-The local UI demo runs with `uv run --project maestro-ui-demo maestro-ui-demo/app.py`.
+The local UI demo runs with `uv run --project examples/console-demo examples/console-demo/app.py`.
 
 ## Workflow recovery
 
 Maestro recovers pending workflows after an executor disconnects for 60 seconds.
-Configure the wait with `--recovery-timeout` or `CONDUCTOR_RECOVERY_TIMEOUT`.
+Configure the wait with `--recovery-timeout` or `MAESTRO_RECOVERY_TIMEOUT`.
 Recovery state is rebuilt after restarts; no local database is required. Run one
 active Maestro instance.
 

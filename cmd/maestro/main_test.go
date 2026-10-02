@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PadenZach/maestro/internal/config"
+	"github.com/PadenZach/maestro/internal/hub"
+	"github.com/PadenZach/maestro/internal/server"
 	"github.com/coder/websocket"
-	"github.com/zpaden/maestro/internal/api"
-	"github.com/zpaden/maestro/internal/config"
-	"github.com/zpaden/maestro/internal/hub"
 )
 
 func TestServeStopsRecoveryOnListenerFailure(t *testing.T) {
@@ -53,7 +53,7 @@ func TestServeShutdownReleasesPendingHTTPRPC(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{}, h, log).Handler()}, h, nil)
+		done <- serve(ctx, l, &http.Server{Handler: server.New(config.Config{}, h, log)}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	peerCtx, peerStop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -146,7 +146,7 @@ func TestServeShutdownClosesHijackedExecutor(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{}, h, log).Handler()}, h, nil)
+		done <- serve(ctx, l, &http.Server{Handler: server.New(config.Config{}, h, log)}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
