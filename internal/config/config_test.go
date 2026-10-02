@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zpaden/maestro/internal/config"
 )
@@ -35,6 +36,12 @@ func TestDeploymentConfiguration(t *testing.T) {
 		invalid bool
 	}{
 		{name: "defaults", want: map[string]any{"ListenAddr": "127.0.0.1:8090", "OrgName": "local", "AllowRemote": false, "EnableAggregates": false}},
+		{name: "recovery default", want: map[string]any{"RecoveryTimeout": float64(time.Minute)}},
+		{name: "recovery environment", env: []string{"CONDUCTOR_RECOVERY_TIMEOUT=90s"}, want: map[string]any{"RecoveryTimeout": float64(90 * time.Second)}},
+		{name: "recovery flag overrides environment", env: []string{"CONDUCTOR_RECOVERY_TIMEOUT=90s"}, args: []string{"--recovery-timeout=2m"}, want: map[string]any{"RecoveryTimeout": float64(2 * time.Minute)}},
+		{name: "invalid recovery environment", env: []string{"CONDUCTOR_RECOVERY_TIMEOUT=perhaps"}, invalid: true},
+		{name: "zero recovery timeout", args: []string{"--recovery-timeout=0s"}, invalid: true},
+		{name: "negative recovery timeout", args: []string{"--recovery-timeout=-1s"}, invalid: true},
 		{name: "aggregate flag", args: []string{"--enable-aggregates"}, want: map[string]any{"EnableAggregates": true}},
 		{name: "aggregate environment", env: []string{"CONDUCTOR_ENABLE_AGGREGATES=true"}, want: map[string]any{"EnableAggregates": true}},
 		{name: "aggregate flag overrides environment", env: []string{"CONDUCTOR_ENABLE_AGGREGATES=true"}, args: []string{"--enable-aggregates=false"}, want: map[string]any{"EnableAggregates": false}},

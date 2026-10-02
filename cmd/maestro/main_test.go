@@ -39,6 +39,29 @@ func TestHTTPListenerLoopbackRestriction(t *testing.T) {
 	}
 }
 
+func TestServeStopsRecoveryOnListenerFailure(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := hub.New(log, time.Second)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = listener.Close()
+	stopped := make(chan struct{})
+	err = serve(context.Background(), listener, &http.Server{}, h, func(ctx context.Context) {
+		<-ctx.Done()
+		close(stopped)
+	})
+	if err == nil {
+		t.Fatal("lost listener failure")
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("server returned without joining recovery")
+	}
+}
+
 // On shutdown, a pending HTTP→executor RPC must finish while
 // the process is shutting down, not hold HTTP Shutdown until its deadline.
 func TestServeShutdownReleasesPendingHTTPRPC(t *testing.T) {
@@ -51,7 +74,7 @@ func TestServeShutdownReleasesPendingHTTPRPC(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h)
+		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	peerCtx, peerStop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -144,7 +167,7 @@ func TestServeShutdownClosesHijackedExecutor(t *testing.T) {
 	ctx, stop := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h)
+		done <- serve(ctx, l, &http.Server{Handler: api.New(config.Config{ConductorKey: "key"}, h, log).Handler()}, h, nil)
 	}()
 	t.Cleanup(func() { stop(); _ = l.Close() })
 	dialCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

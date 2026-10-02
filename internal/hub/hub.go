@@ -40,6 +40,8 @@ type Hub struct {
 	stopped        chan struct{}
 	keepaliveTicks func(context.Context) <-chan time.Time
 	ping           func(context.Context, *websocket.Conn) error
+	disconnected   map[executorKey]DisconnectedExecutor
+	changes        chan struct{}
 }
 
 // Shutdown rejects new sessions, closes all hijacked sockets (which HTTP
@@ -80,6 +82,8 @@ func New(log *slog.Logger, requestTimeout time.Duration) *Hub {
 		apps:           make(map[string]map[*Conn]struct{}),
 		active:         make(map[*Conn]struct{}),
 		stopped:        make(chan struct{}),
+		disconnected:   make(map[executorKey]DisconnectedExecutor),
+		changes:        make(chan struct{}, 1),
 		ping:           func(ctx context.Context, c *websocket.Conn) error { return c.Ping(ctx) },
 	}
 }
@@ -175,6 +179,7 @@ func (h *Hub) register(c *Conn) bool {
 		}
 	}
 	h.apps[c.app][c] = struct{}{}
+	h.notifyChange()
 	h.mu.Unlock()
 	for _, prior := range stale {
 		prior.close(errConnClosed)
@@ -185,8 +190,11 @@ func (h *Hub) register(c *Conn) bool {
 func (h *Hub) deregister(c *Conn) {
 	h.mu.Lock()
 	conns := h.apps[c.app]
-	if conns != nil {
+	if _, registered := conns[c]; registered {
 		delete(conns, c)
+		key := executorKey{c.app, c.executor.ID, c.executor.Version}
+		h.disconnected[key] = DisconnectedExecutor{c.executor.view(c.app), time.Now()}
+		h.notifyChange()
 		if len(conns) == 0 {
 			delete(h.apps, c.app)
 		}
@@ -232,6 +240,16 @@ func (h *Hub) conns(app string) []*Conn {
 // cancellation or a per-request timeout surfaces immediately rather than
 // retrying.
 func (h *Hub) Request(ctx context.Context, app string, req protocol.Request) ([]byte, error) {
+	return h.request(ctx, app, nil, req)
+}
+
+// RequestVersion restricts dispatch and any pure-read retries to an exact
+// application version. Recovery uses this because the SDK recovers its own version.
+func (h *Hub) RequestVersion(ctx context.Context, app, version string, req protocol.Request) ([]byte, error) {
+	return h.request(ctx, app, &version, req)
+}
+
+func (h *Hub) request(ctx context.Context, app string, version *string, req protocol.Request) ([]byte, error) {
 	h.mu.RLock()
 	stopping := h.stopping
 	h.mu.RUnlock()
@@ -239,6 +257,15 @@ func (h *Hub) Request(ctx context.Context, app string, req protocol.Request) ([]
 		return nil, ErrHubClosed
 	}
 	candidates := h.conns(app)
+	if version != nil {
+		matched := candidates[:0]
+		for _, c := range candidates {
+			if c.executor.Version == *version {
+				matched = append(matched, c)
+			}
+		}
+		candidates = matched
+	}
 	if len(candidates) == 0 {
 		return nil, ErrAppUnavailable
 	}
@@ -317,6 +344,10 @@ func retryableRead(req protocol.Request) bool {
 func (h *Hub) Executors() []ExecutorView {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	return h.executorsLocked()
+}
+
+func (h *Hub) executorsLocked() []ExecutorView {
 	out := make([]ExecutorView, 0)
 	for app, conns := range h.apps {
 		for c := range conns {
@@ -330,4 +361,42 @@ func (h *Hub) Executors() []ExecutorView {
 		}
 	}
 	return out
+}
+
+type executorKey struct{ app, id, version string }
+
+// DisconnectedExecutor is a transient notification consumed by recovery.
+type DisconnectedExecutor struct {
+	ExecutorView
+	DisconnectedAt time.Time
+}
+
+// RecoverySnapshot atomically snapshots live executors and drains disconnect
+// notifications. Stale sockets replaced by a reconnect never emit a disconnect.
+func (h *Hub) RecoverySnapshot() ([]ExecutorView, []DisconnectedExecutor) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Changes after this snapshot remain queued until the next pass. The
+	// coordinator can then defer dispatch until it has seen their timestamps.
+	select {
+	case <-h.changes:
+	default:
+	}
+	disconnected := make([]DisconnectedExecutor, 0, len(h.disconnected))
+	for _, executor := range h.disconnected {
+		disconnected = append(disconnected, executor)
+	}
+	clear(h.disconnected)
+	return h.executorsLocked(), disconnected
+}
+
+// Changes wakes the single recovery loop. Coalesced notifications are safe:
+// the snapshot retains disconnects until the loop consumes them.
+func (h *Hub) Changes() <-chan struct{} { return h.changes }
+
+func (h *Hub) notifyChange() {
+	select {
+	case h.changes <- struct{}{}:
+	default:
+	}
 }

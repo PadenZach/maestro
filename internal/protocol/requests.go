@@ -6,6 +6,14 @@ package protocol
 // and omitting unset filters keeps the wire frame minimal — the Python client's
 // from_json allowlist ignores absent optional fields.
 
+// RecoveryRequest asks an executor to recover pending workflows belonging to
+// the listed executor IDs. The SDK applies its own application version.
+func RecoveryRequest(executorIDs []string) Request {
+	r := NewRequest(MsgRecovery)
+	r["executor_ids"] = executorIDs
+	return r
+}
+
 // ListWorkflowsBody carries the LIST_WORKFLOWS filters (protocol.py:ListWorkflowsBody).
 // All fields are optional; only the non-nil ones are sent. Slice
 // filters (name/status/version/...) accept one or many values on the wire.

@@ -77,3 +77,13 @@ tools = { uv = "0.12.21" }
 description = "Validate GitHub Actions workflows"
 run = "actionlint"
 tools = { actionlint = "1.7.12" }
+
+[tasks."recovery:test"]
+description = "Test workflow recovery with isolated Postgres 18 and pinned Python SDKs"
+shell = "bash -euo pipefail -c"
+run = '''
+recovery_tmp="$(mktemp -d)"
+trap 'rm -rf "$recovery_tmp"' EXIT
+go build -o "$recovery_tmp/maestro" ./cmd/maestro
+python3 -B dev/tests/acceptance/recovery_gate.py --binary "$recovery_tmp/maestro"
+'''

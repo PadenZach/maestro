@@ -18,9 +18,19 @@ import (
 	"github.com/zpaden/maestro/internal/api"
 	"github.com/zpaden/maestro/internal/config"
 	"github.com/zpaden/maestro/internal/hub"
+	"github.com/zpaden/maestro/internal/recovery"
 )
 
-func serve(ctx context.Context, listener net.Listener, server *http.Server, h *hub.Hub) error {
+func serve(ctx context.Context, listener net.Listener, server *http.Server, h *hub.Hub, recoverWorkflows func(context.Context)) error {
+	recoveryCtx, stopRecovery := context.WithCancel(ctx)
+	defer stopRecovery()
+	recoveryDone := make(chan struct{})
+	go func() {
+		defer close(recoveryDone)
+		if recoverWorkflows != nil {
+			recoverWorkflows(recoveryCtx)
+		}
+	}()
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	var serveErr error
@@ -28,6 +38,8 @@ func serve(ctx context.Context, listener net.Listener, server *http.Server, h *h
 	case <-ctx.Done():
 	case serveErr = <-served:
 	}
+	stopRecovery()
+	<-recoveryDone
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// Shutdown closes the HTTP listener but waits for active HTTP handlers.
@@ -66,6 +78,7 @@ func main() {
 	slog.SetDefault(log)
 
 	h := hub.New(log, cfg.RequestTimeout)
+	coordinator := recovery.New(log, h, cfg.RecoveryTimeout)
 	srv := api.New(cfg, h, log)
 
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
@@ -81,7 +94,7 @@ func main() {
 	log.Info("maestro listening", "addr", listener.Addr().String())
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := serve(ctx, listener, &http.Server{Handler: srv.Handler()}, h); err != nil {
+	if err := serve(ctx, listener, &http.Server{Handler: srv.Handler()}, h, coordinator.Run); err != nil {
 		log.Error("server shutdown failed", "err", err)
 		os.Exit(1)
 	}

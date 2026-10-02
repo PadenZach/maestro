@@ -10,7 +10,7 @@ Download Linux or macOS binaries from the
 [mise's GitHub backend](https://mise.jdx.dev/dev-tools/backends/github.html):
 
 ```sh
-mise use -g github:PadenZach/maestro@0.2.0
+mise use -g github:PadenZach/maestro@0.3.0
 maestro --help
 ```
 
@@ -19,11 +19,11 @@ also includes SHA-256 checksums in `checksums.txt`. Mise selects the platform
 automatically.
 Private repository access requires a GitHub token with access to this repository.
 
-The [tagged OCI image](https://github.com/PadenZach/maestro/pkgs/container/maestro?tag=0.2.0)
+The [tagged OCI image](https://github.com/PadenZach/maestro/pkgs/container/maestro?tag=0.3.0)
 supports Linux amd64 and arm64:
 
 ```sh
-docker pull ghcr.io/padenzach/maestro:0.2.0
+docker pull ghcr.io/padenzach/maestro:0.3.0
 ```
 
 ## Local development
@@ -43,31 +43,15 @@ Run the development checks with Python 3 available:
 mise run check
 ```
 
+## Workflow recovery
+
+Maestro recovers pending workflows after an executor disconnects for 60 seconds.
+Configure the wait with `--recovery-timeout` or `CONDUCTOR_RECOVERY_TIMEOUT`.
+Recovery state is rebuilt after restarts; no local database is required. Run one
+active Maestro instance.
+
 ## Releases
 
-The release version lives in [`VERSION`](VERSION). To release:
-
-1. Increase the version, for example from `0.1.0` to `0.1.1`. Use SemVer without
-   a `v` prefix or build metadata; prereleases such as `0.2.0-rc.1` are supported.
-2. Commit the change and merge it into `main`.
-3. GitHub Actions runs the checks, scans the image, and smoke-tests the exact
-   candidate on Linux amd64 and arm64. After success, it publishes the versioned
-   container image, creates the matching Git tag (for example `v0.1.1`), and
-   publishes a GitHub Release. Tags are created automatically.
-
-Each release includes binaries for Linux and macOS (amd64 and arm64),
-checksums, download links, and the tagged OCI image. Linux binaries are extracted
-from the tested image; macOS binaries are built from the same commit.
-CI verifies installation through mise's GitHub backend. Prerelease versions are
-marked as prereleases on GitHub.
-Ordinary pushes to `main` publish images tagged `sha-<full-commit-id>`. SDK tests
-and image builds run only on `main`. Pull requests and manual runs on other
-branches run version validation, code checks, and dependency scans. Images use
-explicit version or commit tags rather than a moving `latest` tag.
-
-To retry a failed release, rerun its original CI run in GitHub Actions. Retries
-reuse the candidate image and refuse to overwrite existing tags with different
-content. Fixes to an already published release require a new version bump.
-
-The UI displays the version plus a short commit ID, such as
-`0.1.0+1feaaa9ffe7a`; local builds with uncommitted changes append `.dirty`.
+Bump [`VERSION`](VERSION), commit, and merge into `main`. CI checks the change
+and publishes the container image, Git tag, and Linux/macOS binaries to GitHub
+Releases. Rerun the original CI run to retry a failed release.
