@@ -4,7 +4,6 @@
 *.md
 !/README.md
 /docs/*
-!/docs/reference/
 /.pi/
 /.planning/
 /.agents/
@@ -24,6 +23,8 @@ coverage.*
 *.coverprofile
 go.work
 go.work.sum
+node_modules/
+/internal/console/static/vendor/
 
 # Python environments and test data
 .venv/

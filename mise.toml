@@ -2,9 +2,15 @@
 
 [tools]
 go = "1.26.8"
+node = "26.7.0"
+
+[tasks.assets]
+description = "Install pinned frontend dependencies and prepare embedded assets"
+run = ["npm ci --ignore-scripts --no-audit --no-fund", "npm run assets"]
 
 [tasks.dev]
 description = "Run the development server on http://127.0.0.1:8090"
+depends = ["assets"]
 run = "go run -buildvcs=true ./cmd/maestro"
 
 [tasks.fmt]
@@ -13,6 +19,7 @@ run = "gofmt -w version.go cmd internal tests/container"
 
 [tasks.check]
 description = "Check formatting, build, vet, Staticcheck and run Go tests"
+depends = ["assets"]
 run = [
   '''
 set -eu
@@ -42,7 +49,7 @@ test "$(printf %s "$version" | wc -c)" -le 128
 
 [tasks.package]
 description = "Package Linux/macOS binaries and SHA-256 checksums in dist/release"
-depends = ["version:check"]
+depends = ["version:check", "assets"]
 shell = "bash -euo pipefail -c"
 run = '''
 version="$(cat VERSION)"
@@ -86,18 +93,19 @@ description = "Test the container's HTTP endpoints, shutdown and security settin
 run = "bash tests/container/smoke.sh"
 
 [tasks.scan]
-description = "Scan Go dependencies with Trivy (fail on HIGH/CRITICAL)"
+description = "Scan dependencies with Trivy (fail on HIGH/CRITICAL)"
 shell = "bash -euo pipefail -c"
 run = '''
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-cp go.mod go.sum "$scratch/"
+cp go.mod go.sum package.json package-lock.json "$scratch/"
 trivy fs --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 1 "$scratch"
 '''
 tools = { trivy = "0.74.0" }
 
 [tasks."sdk:test"]
 description = "Test latest stable DBOS Python 2.31.x and 3.x (or DBOS_SDK_MAJOR)"
+depends = ["assets"]
 shell = "bash -euo pipefail -c"
 run = '''
 scratch="$(mktemp -d)"
@@ -117,6 +125,7 @@ tools = { uv = "0.12.21" }
 
 [tasks."dbosctl:test"]
 description = "Test the pinned dbosctl client against fake peers and real DBOS SDKs"
+depends = ["assets"]
 shell = "bash -euo pipefail -c"
 run = '''
 scratch="$(mktemp -d)"
@@ -145,6 +154,7 @@ tools = { uv = "0.12.21" }
 
 [tasks."postgres:test"]
 description = "Test the API and Console with real DBOS data in isolated Postgres 18"
+depends = ["assets"]
 shell = "bash -euo pipefail -c"
 run = '''
 scratch="$(mktemp -d)"
@@ -160,6 +170,7 @@ tools = { actionlint = "1.7.12" }
 
 [tasks."recovery:test"]
 description = "Test workflow recovery with isolated Postgres 18 and pinned Python SDKs"
+depends = ["assets"]
 shell = "bash -euo pipefail -c"
 run = '''
 recovery_tmp="$(mktemp -d)"
