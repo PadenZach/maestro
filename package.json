@@ -6,6 +6,6 @@
   },
   "dependencies": {
     "alpinejs": "3.17.4",
-    "htmx.org": "2.0.4"
+    "htmx.org": "2.0.11"
   }
 }
