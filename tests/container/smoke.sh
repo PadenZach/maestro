@@ -23,9 +23,12 @@ curl --noproxy '*' -fsS --retry 30 --retry-connrefused --retry-delay 1 --max-tim
   "$base/healthz" | jq -e '. == {"status": true}' >/dev/null
 curl --noproxy '*' -fsS "$base/" > "$scratch/index.html"
 curl --noproxy '*' -fsS "$base/openapi.json" > "$scratch/openapi.json"
-curl --noproxy '*' -fsS "$base/static/htmx.min.js" > "$scratch/htmx.js"
 grep -qi Maestro "$scratch/index.html"
-grep -qi htmx "$scratch/htmx.js"
+for asset in htmx alpine; do
+  curl --noproxy '*' -fsS "$base/static/vendor/$asset.min.js" > "$scratch/$asset.js"
+  grep -qi "$asset" "$scratch/$asset.js"
+  grep -Fq "/static/vendor/$asset.min.js" "$scratch/index.html"
+done
 jq -e '.openapi' "$scratch/openapi.json" >/dev/null
 if [[ -n "${EXPECTED_VERSION:-}" ]]; then
   test "$(docker exec "$container" /maestro --version)" = "maestro $EXPECTED_VERSION"

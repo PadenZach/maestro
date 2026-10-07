@@ -36,6 +36,9 @@ mise install
 mise run dev
 ```
 
+Mise tasks install the pinned frontend dependencies and embed them in the binary.
+Before running Go commands directly, run `mise run assets`.
+
 Open the console at <http://127.0.0.1:8090>. Use `--listen 0.0.0.0:8090`
 to accept remote connections; authentication belongs to your gateway.
 

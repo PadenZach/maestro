@@ -15,8 +15,9 @@ import (
 
 // all: is required so partial files (templates/_*.html) are embedded — embed
 // skips names beginning with "_" or "." otherwise.
+// Explicit vendor paths make missing asset preparation a build error.
 //
-//go:embed all:templates static
+//go:embed all:templates static static/vendor/htmx.min.js static/vendor/alpine.min.js
 var embedded embed.FS
 
 // pageFiles maps a logical page name to its template file. Each becomes its own
@@ -89,7 +90,7 @@ func (r *renderer) execute(w http.ResponseWriter, t *template.Template, name str
 	}
 }
 
-// staticHandler serves the embedded /static assets (htmx.min.js, app.css).
+// staticHandler serves the embedded /static assets.
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(embedded, "static")
 	if err != nil {

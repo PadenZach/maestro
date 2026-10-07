@@ -55,8 +55,10 @@ func TestListWorkflows_JSONAndHTML(t *testing.T) {
 	if !strings.Contains(html, "id_e1002bf4-01d9") || !strings.Contains(html, "agentic_research_workflow") {
 		t.Fatalf("html missing workflow row: %s", html)
 	}
-	if !strings.Contains(html, "htmx.min.js") {
-		t.Fatalf("html should reference vendored htmx")
+	for _, asset := range []string{"htmx.min.js", "alpine.min.js"} {
+		if !strings.Contains(html, "/static/vendor/"+asset) {
+			t.Fatalf("html should reference embedded %s", asset)
+		}
 	}
 }
 

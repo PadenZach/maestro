@@ -1,0 +1,11 @@
+{
+  "name": "maestro",
+  "private": true,
+  "scripts": {
+    "assets": "mkdir -p internal/console/static/vendor && cp node_modules/htmx.org/dist/htmx.min.js internal/console/static/vendor/htmx.min.js && cp node_modules/alpinejs/dist/cdn.min.js internal/console/static/vendor/alpine.min.js"
+  },
+  "dependencies": {
+    "alpinejs": "3.17.4",
+    "htmx.org": "2.0.4"
+  }
+}
